@@ -2,7 +2,7 @@ package Atomic::Pipe;
 use strict;
 use warnings;
 
-our $VERSION = "0.001";
+our $VERSION = '0.002';
 
 use IO();
 use Carp qw/croak/;
