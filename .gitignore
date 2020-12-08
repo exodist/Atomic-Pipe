@@ -13,7 +13,7 @@ Build
 _build
 cover_db/
 MYMETA.*
-/Test2-*/
+/Atomic-Pipe*/
 /.build
 TODO
 t2_lib
