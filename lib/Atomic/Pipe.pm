@@ -14,7 +14,12 @@ BEGIN {
     *PIPE_BUF = POSIX->can('PIPE_BUF') || sub() { 512 };
 }
 
-use Errno qw/EINTR ERESTART EAGAIN/;
+use Errno qw/EINTR EAGAIN/;
+my %RETRY_ERRNO;
+BEGIN {
+    %RETRY_ERRNO = (EINTR() => 1);
+    $RETRY_ERRNO{Errno->ERESTART} = 1 if Errno->can('ERESTART');
+}
 use Fcntl();
 require bytes;
 
@@ -176,7 +181,7 @@ sub write_message {
 
         SWRITE: {
             my $wrote = syswrite($wh, $out, $write);
-            redo SWRITE if !$wrote || $! == EINTR || $! == ERESTART;
+            redo SWRITE if !$wrote || $RETRY_ERRNO{0 + $!};
             last SWRITE if $wrote == $write;
             $wrote //= "<NULL>";
             die "$wrote vs $write: $!";
@@ -204,7 +209,7 @@ sub read_message {
             my $read = sysread($rh, $state->{p_buffer}, $psize - $pb_size);
             unless (defined $read) {
                 return if $! == EAGAIN; # NON-BLOCKING
-                next if $! == EINTR || $! == ERESTART;
+                next if $RETRY_ERRNO{0 + $!};
                 croak "Error $!";
             }
 
@@ -228,7 +233,7 @@ sub read_message {
             my $read = sysread($rh, $state->{d_buffer}, $key->{size} - $db_size);
             unless (defined $read) {
                 return if $! == EAGAIN; # NON-BLOCKING
-                next if $! == EINTR || $! == ERESTART;
+                next if $RETRY_ERRNO{0 + $!};
                 croak "Error $!";
             }
 
