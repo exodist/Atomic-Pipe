@@ -11,7 +11,12 @@ BEGIN {
     # POSIX says writes of 512 or less are atomic, but some platforms allow for
     # larger ones.
     require POSIX;
-    *PIPE_BUF = POSIX->can('PIPE_BUF') || sub() { 512 };
+    if (POSIX->can('PIPE_BUF') && eval { POSIX::PIPE_BUF() }) {
+        *PIPE_BUF = \&POSIX::PIPE_BUF;
+    }
+    else {
+        *PIPE_BUF = sub() { 512 };
+    }
 }
 
 use Errno qw/EINTR EAGAIN/;
