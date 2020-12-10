@@ -1,5 +1,7 @@
 {{$NEXT}}
 
+    - Do not attempt to run on windows, dos, or os2
+
 0.004     2020-12-08 20:22:17-08:00 America/Los_Angeles
 
     - Add stress test
