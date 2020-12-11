@@ -106,12 +106,34 @@ Fork example from tests:
     not have too many handles floating around preventing an EOF.
 
 - $p = Atomic::Pipe->from\_fh($fh)
+- $p = Atomic::Pipe->from\_fh($mode, $fh)
 
     Create an instance around an existing filehandle (A clone of the handle will be
     made and kept internally).
 
-    This will fail if the handle is not a pipe. This constructor will determine the
-    mode (reader or writer) for you from the given handle.
+    This will fail if the handle is not a pipe.
+
+    If no mode is provided this constructor will determine the mode (reader or
+    writer) for you from the given handle. **Note:** This works on linux, but not
+    BSD or Solaris, on most platforms your must provide a mode.
+
+    Valid modes:
+
+    - '>&'
+
+        Write-only.
+
+    - '>&='
+
+        Write-only and reuse fileno.
+
+    - '<&'
+
+        Read-only.
+
+    - '<&='
+
+        Read-only and reuse fileno.
 
 - $p = Atomic::Pipe->from\_fd($mode, $fd)
 

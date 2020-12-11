@@ -40,27 +40,41 @@ sub _get_tid {
     return threads->tid();
 }
 
+sub _fh_mode {
+    my $self = shift;
+    my ($fh) = @_;
+
+    my $mode = fcntl($fh, Fcntl::F_GETFL(), 0) // return undef;
+    return '<&' if $mode == Fcntl::O_RDONLY();
+    return '>&' if $mode == Fcntl::O_WRONLY();
+    return undef;
+}
+
+my %MODE_TO_DIR = (
+    '<&'  => RH(),
+    '<&=' => RH(),
+    '>&'  => WH(),
+    '>&=' => WH(),
+);
+sub _mode_to_dir {
+    my $self = shift;
+    my ($mode) = @_;
+    return $MODE_TO_DIR{$mode};
+}
+
 sub from_fh {
     my $class = shift;
-    my ($ifh) = @_;
+    my $ifh = pop;
+    my ($mode) = @_;
 
     croak "Filehandle is not a pipe (-p check)" unless -p $ifh;
 
-    my ($dir, $fh);
-    my $mode = fcntl($ifh, Fcntl::F_GETFL(), 0);
-    if ($mode & Fcntl::O_RDONLY() || $mode == Fcntl::O_RDONLY()) {
-        $dir = RH();
-        open($fh, '<&', $ifh) or croak "Could not clone filehandle: $!";
-    }
-    elsif ($mode & Fcntl::O_WRONLY() || $mode == Fcntl::O_WRONLY()) {
-        $dir = WH();
-        open($fh, '>&', $ifh) or croak "Could not clone filehandle: $!";
-    }
-    else {
-        croak "Unknown handle mode ($mode)";
-    }
+    $mode //= $class->_fh_mode($ifh) // croak "Could not determine filehandle mode, please specify '>&' or '<&'";
+    my $dir = $class->_mode_to_dir($mode) // croak "Invalid mode: $mode";
 
+    open(my $fh, $mode, $ifh) or croak "Could not clone ($mode) filehandle: $!";
     binmode($fh);
+
     return bless({$dir => $fh}, $class);
 }
 
@@ -68,18 +82,8 @@ sub from_fd {
     my $class = shift;
     my ($mode, $fd) = @_;
 
-    my ($dir, $fh);
-    if ($mode eq '<&' || $mode eq '<&=') {
-        $dir = RH();
-        open($fh, $mode, $fd) or croak "Could not open fd$fd: $!";
-    }
-    elsif ($mode eq '>&' || '>&=') {
-        $dir = WH();
-        open($fh, $mode, $fd) or croak "Could not clone fd$fd: $!";
-    }
-    else {
-        croak "Invalid mode: $mode";
-    }
+    my $dir = $class->_mode_to_dir($mode) // croak "Invalid mode: $mode";
+    open(my $fh, $mode, $fd) or croak "Could not open ($mode) fd$fd: $!";
 
     croak "Filehandle is not a pipe (-p check)" unless -p $fh;
 
@@ -431,11 +435,38 @@ not have too many handles floating around preventing an EOF.
 
 =item $p = Atomic::Pipe->from_fh($fh)
 
+=item $p = Atomic::Pipe->from_fh($mode, $fh)
+
 Create an instance around an existing filehandle (A clone of the handle will be
 made and kept internally).
 
-This will fail if the handle is not a pipe. This constructor will determine the
-mode (reader or writer) for you from the given handle.
+This will fail if the handle is not a pipe.
+
+If no mode is provided this constructor will determine the mode (reader or
+writer) for you from the given handle. B<Note:> This works on linux, but not
+BSD or Solaris, on most platforms your must provide a mode.
+
+Valid modes:
+
+=over 4
+
+=item '>&'
+
+Write-only.
+
+=item '>&='
+
+Write-only and reuse fileno.
+
+=item '<&'
+
+Read-only.
+
+=item '<&='
+
+Read-only and reuse fileno.
+
+=back
 
 =item $p = Atomic::Pipe->from_fd($mode, $fd)
 
