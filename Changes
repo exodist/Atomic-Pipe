@@ -1,5 +1,7 @@
 {{$NEXT}}
 
+    - Add write_burst, fits_in_burst(), and parts_needed()
+
 0.007     2020-12-10 19:05:37-08:00 America/Los_Angeles
 
     - Fix takeover for non-linux platforms

@@ -217,16 +217,59 @@ sub close {
 my $psize = 16; # 32bit pid, 32bit tid, 32 bit size, 32 bit int part id;
 my $dsize = PIPE_BUF - $psize;
 
+sub fits_in_burst {
+    my $self = shift;
+    my ($data) = @_;
+
+    my $size = bytes::length($data);
+    return undef unless $size <= PIPE_BUF;
+
+    return $size;
+}
+
+sub write_burst {
+    my $self = shift;
+    my ($data) = @_;
+
+    my $size = $self->fits_in_burst($data) // return undef;
+
+    return $self->_write_burst($data, $size);
+}
+
+sub _write_burst {
+    my $self = shift;
+    my ($data, $size) = @_;
+
+    my $wh = $self->{+WH} or croak "Cannot call write on a pipe reader";
+
+    my $wrote;
+    SWRITE: {
+        $wrote = syswrite($wh, $data, $size);
+        redo SWRITE if !$wrote || $RETRY_ERRNO{0 + $!};
+        last SWRITE if $wrote == $size;
+        $wrote //= "<NULL>";
+        die "$wrote vs $size: $!";
+    }
+
+    return $wrote;
+}
+
+sub parts_needed {
+    my $self = shift;
+    my ($data) = @_;
+
+    my $dtotal = bytes::length($data);
+    my $parts = int($dtotal / $dsize);
+    $parts++ if $dtotal % $dsize;
+
+    return $parts;
+}
+
 sub write_message {
     my $self = shift;
     my ($data) = @_;
 
-    my $wh = $self->{+WH} or croak "Cannot call write on a pipe reader";
-
-    my $dtotal = bytes::length($data);
-
-    my $parts = int($dtotal / $dsize);
-    $parts++ if $dtotal % $dsize;
+    my $parts = $self->parts_needed($data);
 
     my $id = $parts - 1;
     for (my $part = 0; $part < $parts; $part++) {
@@ -235,14 +278,7 @@ sub write_message {
         my $out = pack("l2L2a$size", $$, _get_tid(), $id--, $size, $bytes);
         my $write = $size + $psize;
 
-        SWRITE: {
-            my $wrote = syswrite($wh, $out, $write);
-            redo SWRITE if !$wrote || $RETRY_ERRNO{0 + $!};
-            last SWRITE if $wrote == $write;
-            $wrote //= "<NULL>";
-            die "$wrote vs $write: $!";
-        }
-
+        $self->_write_burst($out, $write);
     }
 
     return $parts;
@@ -515,6 +551,11 @@ set C<< $p->blocking(0) >>. If blocking is turned off, and no message is ready,
 this will return undef. This will also return undef when the pipe is closed
 (EOF).
 
+=item $count = $self->parts_needed($data)
+
+Get the number of parts the data will be split into for it to be written in
+atomic chunks.
+
 =item $p->blocking($bool)
 
 =item $bool = $p->blocking
@@ -529,6 +570,27 @@ True if EOF (all writers are closed).
 
 Close this end of the pipe (or both ends if this is not yet split into
 reader/writer pairs).
+
+=item $undef_or_bytes = $p->fits_in_burst($data)
+
+This will return C<undef> if the data DES NOT fit in a burst. This will return
+the size of the data in bytes if it will fit in a burst.
+
+=item $undef_or_bytes = $p->write_burst($data)
+
+Attempt to write C<$data> in a single atomic burst. If the data is too big to
+write atomically this method will not write any data and will return C<undef>.
+If the data does fit in an atomic write then the data will be written and the
+total number of bytes written will be returned.
+
+B<Note:> YOU MUST NOT USE C<read_message()> when writing bursts. This method
+sends the data as-is with no data-header or modification. This method should be
+used when the other side is reading the pipe directly without an Atomic::Pipe
+on the receiving end.
+
+The primary use case of this is if you have multiple writers sending short
+plain-text messages that will not exceed the atomic pipe buffer limit (minimum
+of 512 bytes on systems that support atomic pipes accoring to POSIX).
 
 =back
 

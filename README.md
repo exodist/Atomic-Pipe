@@ -174,6 +174,11 @@ Fork example from tests:
     this will return undef. This will also return undef when the pipe is closed
     (EOF).
 
+- $count = $self->parts\_needed($data)
+
+    Get the number of parts the data will be split into for it to be written in
+    atomic chunks.
+
 - $p->blocking($bool)
 - $bool = $p->blocking
 
@@ -187,6 +192,27 @@ Fork example from tests:
 
     Close this end of the pipe (or both ends if this is not yet split into
     reader/writer pairs).
+
+- $undef\_or\_bytes = $p->fits\_in\_burst($data)
+
+    This will return `undef` if the data DES NOT fit in a burst. This will return
+    the size of the data in bytes if it will fit in a burst.
+
+- $undef\_or\_bytes = $p->write\_burst($data)
+
+    Attempt to write `$data` in a single atomic burst. If the data is too big to
+    write atomically this method will not write any data and will return `undef`.
+    If the data does fit in an atomic write then the data will be written and the
+    total number of bytes written will be returned.
+
+    **Note:** YOU MUST NOT USE `read_message()` when writing bursts. This method
+    sends the data as-is with no data-header or modification. This method should be
+    used when the other side is reading the pipe directly without an Atomic::Pipe
+    on the receiving end.
+
+    The primary use case of this is if you have multiple writers sending short
+    plain-text messages that will not exceed the atomic pipe buffer limit (minimum
+    of 512 bytes on systems that support atomic pipes accoring to POSIX).
 
 ### RESIZING THE PIPE BUFFER
 
