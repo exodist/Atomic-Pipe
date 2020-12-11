@@ -108,6 +108,22 @@ METHODS
       your job to make you do not have too many handles floating around
       preventing an EOF.
 
+    $r = Atomic::Pipe->read_fifo($FIFO_PATH)
+
+    $w = Atomic::Pipe->write_fifo($FIFO_PATH)
+
+      These 2 constructors let you connect to a FIFO by filesystem path.
+
+      The interface difference (read_fifo and write_fifo vs specifying a
+      mode) is because the modes to use for fifo's are not obvious ('+<'
+      for reading).
+
+      NOTE: THERE IS NO EOF for the read-end in the process that created
+      the fifo. You need to figure out when the last message is received on
+      your own somehow. If you use blocking reads in a loop with no loop
+      exit condition then the loop will never end even after all writers
+      are gone.
+
     $p = Atomic::Pipe->from_fh($fh)
 
     $p = Atomic::Pipe->from_fh($mode, $fh)

@@ -105,6 +105,19 @@ Fork example from tests:
     one with the reader and one with the writer. It is also your job to make you do
     not have too many handles floating around preventing an EOF.
 
+- $r = Atomic::Pipe->read\_fifo($FIFO\_PATH)
+- $w = Atomic::Pipe->write\_fifo($FIFO\_PATH)
+
+    These 2 constructors let you connect to a FIFO by filesystem path.
+
+    The interface difference (read\_fifo and write\_fifo vs specifying a mode) is
+    because the modes to use for fifo's are not obvious (`'+<'` for reading).
+
+    **NOTE:** THERE IS NO EOF for the read-end in the process that created the fifo.
+    You need to figure out when the last message is received on your own somehow.
+    If you use blocking reads in a loop with no loop exit condition then the loop
+    will never end even after all writers are gone.
+
 - $p = Atomic::Pipe->from\_fh($fh)
 - $p = Atomic::Pipe->from\_fh($mode, $fh)
 
