@@ -62,6 +62,30 @@ sub _mode_to_dir {
     return $MODE_TO_DIR{$mode};
 }
 
+sub read_fifo {
+    my $class = shift;
+    my ($fifo) = @_;
+
+    croak "File '$fifo' is not a pipe (-p check)" unless -p $fifo;
+
+    open(my $fh, '+<', $fifo) or die "Could not open fifo ($fifo) for reading: $!";
+    binmode($fh);
+
+    return bless({RH() => $fh}, $class);
+}
+
+sub write_fifo {
+    my $class = shift;
+    my ($fifo) = @_;
+
+    croak "File '$fifo' is not a pipe (-p check)" unless -p $fifo;
+
+    open(my $fh, '>', $fifo) or die "Could not open fifo ($fifo) for writing: $!";
+    binmode($fh);
+
+    return bless({WH() => $fh}, $class);
+}
+
 sub from_fh {
     my $class = shift;
     my $ifh = pop;
@@ -468,6 +492,20 @@ If you really must have a C<new()> method it is here for you to abuse. The
 returned pipe has both handles, it is your job to then turn it into 2 clones
 one with the reader and one with the writer. It is also your job to make you do
 not have too many handles floating around preventing an EOF.
+
+=item $r = Atomic::Pipe->read_fifo($FIFO_PATH)
+
+=item $w = Atomic::Pipe->write_fifo($FIFO_PATH)
+
+These 2 constructors let you connect to a FIFO by filesystem path.
+
+The interface difference (read_fifo and write_fifo vs specifying a mode) is
+because the modes to use for fifo's are not obvious (C<< '+<' >> for reading).
+
+B<NOTE:> THERE IS NO EOF for the read-end in the process that created the fifo.
+You need to figure out when the last message is received on your own somehow.
+If you use blocking reads in a loop with no loop exit condition then the loop
+will never end even after all writers are gone.
 
 =item $p = Atomic::Pipe->from_fh($fh)
 
