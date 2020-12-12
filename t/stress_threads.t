@@ -15,13 +15,16 @@ sub worker(&) {
 
 my $COUNT = 10_000;
 
-worker { $w->write_message("aaa" x PIPE_BUF) for 1 .. $COUNT; $w->close };
-worker { $w->write_message("bbb" x PIPE_BUF) for 1 .. $COUNT; $w->close };
-worker { $w->write_message("ccc" x PIPE_BUF) for 1 .. $COUNT; $w->close };
-worker { $w->write_message("ddd" x PIPE_BUF) for 1 .. $COUNT; $w->close };
-worker { $w->write_message("eee" x PIPE_BUF) for 1 .. $COUNT; $w->close };
+diag("Using count: $COUNT");
 
-$w->close;
+worker { sleep 5 if $^O eq 'MSWin32'; $w->write_message("aaa" x PIPE_BUF) for 1 .. $COUNT };
+worker { sleep 5 if $^O eq 'MSWin32'; $w->write_message("bbb" x PIPE_BUF) for 1 .. $COUNT };
+worker { sleep 5 if $^O eq 'MSWin32'; $w->write_message("ccc" x PIPE_BUF) for 1 .. $COUNT };
+worker { sleep 5 if $^O eq 'MSWin32'; $w->write_message("ddd" x PIPE_BUF) for 1 .. $COUNT };
+worker { sleep 5 if $^O eq 'MSWin32'; $w->write_message("eee" x PIPE_BUF) for 1 .. $COUNT };
+
+# Without this windows blocks in the main thread and the other threads never do their work.
+sleep 4 if $^O eq 'MSWin32';
 
 my %seen;
 while (my $msg = $r->read_message) {
@@ -38,7 +41,10 @@ while (my $msg = $r->read_message) {
     );
 
     $seen{substr($msg, 0, 1)}++;
+    last if ++$seen{TOTAL} >= (5 * $COUNT);
 }
+
+delete $seen{TOTAL};
 
 is(
     \%seen,

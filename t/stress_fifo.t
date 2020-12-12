@@ -11,7 +11,10 @@ use File::Spec;
 
 my $tempdir = tempdir(CLEANUP => 1);
 my $fifo = File::Spec->catfile($tempdir, 'fifo');
-mkfifo($fifo, 0700) or die "Failed to make fifo: $!";
+unless (eval { mkfifo($fifo, 0700) or die "Failed to make fifo: $!" }) {
+    die $@ unless $@ =~ m/not implemented on this architecture/;
+    skip_all $@;
+};
 
 my $r = Atomic::Pipe->read_fifo($fifo);
 

@@ -4,21 +4,24 @@ BEGIN { *PIPE_BUF = Atomic::Pipe->can('PIPE_BUF') }
 
 my ($rh, $wh);
 pipe($rh, $wh);
-$rh->blocking(0);
+
+$wh->autoflush();
 
 my $w = Atomic::Pipe->from_fh('>&=', $wh);
 
-ok($w->write_burst("aaa"), "write_burst returned true");
+ok($w->write_burst("aaa\n"), "write_burst returned true");
 
-my $data = do { local $/ = undef; <$rh> };
+chomp(my $data = <$rh>);
 is($data, 'aaa', "Got the short message");
 
 ok(!$w->write_burst(("a" x PIPE_BUF) . 'x'), "Message is too long, not written");
-$data = do { local $/ = undef; <$rh> };
-ok(!defined $data, "No message received");
+print $wh "\n";
+chomp($data = <$rh>);
+ok(!$data, "No message received");
 
-ok($w->write_burst("a" x PIPE_BUF), "write_burst max-length returned true");
-$data = do { local $/ = undef; <$rh> };
-is($data, ('a' x PIPE_BUF), "Got the short burst");
+ok($w->write_burst(("a" x (PIPE_BUF - 1)) . "\n"), "write_burst max-length returned true");
+close($wh);
+chomp($data = <$rh>);
+is($data, ('a' x (PIPE_BUF - 1)), "Got the short burst");
 
 done_testing;

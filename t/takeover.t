@@ -17,7 +17,7 @@ subtest from_fh => sub {
 };
 
 # Some platforms cannot do it this way
-if (Atomic::Pipe->_fh_mode($rh) && Atomic::Pipe->_fh_mode($wh)) {
+if (eval {Atomic::Pipe->_fh_mode($rh) && Atomic::Pipe->_fh_mode($wh)}) {
     subtest from_fh_auto_mode => sub {
         my $r = Atomic::Pipe->from_fh($rh);
         my $w = Atomic::Pipe->from_fh($wh);
