@@ -10,7 +10,7 @@ use ExtUtils::MakeMaker;
 
 use Config qw/%Config/;
 die "Platform ($^O) not supported, patches welcome!\n"
-  if $^O =~ m/(win32|dos|os2)/i;
+  if $^O =~ m/(dos|os2)/i;
 if ($ENV{AUTOMATED_TESTING}) {
     my $is_njh = 0;
     $is_njh ||= -d '/export/home/njh';
