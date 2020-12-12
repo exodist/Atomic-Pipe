@@ -1,5 +1,7 @@
 {{$NEXT}}
 
+    - Fix win32
+
 0.009     2020-12-10 22:46:18-08:00 America/Los_Angeles
 
     - Add fifo support
