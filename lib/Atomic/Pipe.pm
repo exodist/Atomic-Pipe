@@ -34,6 +34,7 @@ use Scalar::Util qw/blessed/;
 use constant RH    => 'rh';
 use constant WH    => 'wh';
 use constant STATE => 'state';
+use constant BLOCKING => 'blocking';
 
 sub _get_tid {
     return 0 unless $INC{'threads.pm'};
@@ -142,10 +143,41 @@ sub pair {
     );
 }
 
+# This is a heavily modified version of a pattern suggested on stack-overflow
+# and also used in Win32::PowerShell::IPC.
+my $peek_named_pipe;
+sub _win32_pipe_ready {
+    my $self = shift;
+    my $wh = Win32API::File::FdGetOsFHandle(fileno($self->{+RH}));
+
+    my $buf = "";
+    my $buflen = 0;
+
+    $peek_named_pipe ||= Win32::API->new("kernel32", 'PeekNamedPipe', 'NPIPPP', 'N')
+        || die "Can't load PeekNamedPipe from kernel32.dll";
+
+    my $got    = pack('L', 0);
+    my $avail  = pack('L', 0);
+    my $remain = pack('L', 0);
+
+    my $ret = $peek_named_pipe->Call($wh, $buf, $buflen, $got, $avail, $remain);
+
+    return unpack('L', $avail);
+}
+
 sub blocking {
     my $self = shift;
-    my $rh = $self->{+RH} or croak "Not a reader";
-    $rh->blocking(@_);
+    my $rh   = $self->{+RH} or croak "Not a reader";
+
+    if ($^O eq 'MSWin32') {
+        eval { require Win32::API; 1 } or die "non-blocking on windows requires Win32::API please install it.\n$@";
+        eval { require Win32API::File; 1 } or die "non-blocking on windows requires Win32API::File please install it.\n$@";
+        ($self->{+BLOCKING}) = @_ if @_;
+        return $self->{+BLOCKING};
+    }
+    else {
+        $rh->blocking(@_);
+    }
 }
 
 sub size {
@@ -318,6 +350,10 @@ sub read_message {
     return if $state->{EOF};
 
     my $rh = $self->{+RH} or croak "Not a reader";
+
+    if ($^O eq 'MSWin32' && defined($self->{+BLOCKING}) && !$self->{+BLOCKING}) {
+        return undef unless $self->_win32_pipe_ready();
+    }
 
     while (1) {
         my $pb_size = $state->{pb_size} //= 0;

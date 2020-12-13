@@ -1,5 +1,9 @@
 {{$NEXT}}
 
+    - Fix non-blocking mode in windows
+    - Single implementation of IPC tests where fork or threads are picked as
+      needed.
+
 0.010     2020-12-12 15:18:53-08:00 America/Los_Angeles
 
     - Fix win32
