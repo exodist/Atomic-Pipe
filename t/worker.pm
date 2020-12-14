@@ -8,13 +8,14 @@ skip_all "This test requires either forking or threads"
 
 if (CAN_REALLY_FORK) {
     diag "Using fork()...\n";
-    $SIG{CHLD} = 'IGNORE';
 
-    *cleanup = sub() { 1 };
+    my @pids;
+
+    *cleanup = sub() { waitpid($_, 0) for @pids; @pids = () };
     *worker  = sub(&) {
         my ($code) = @_;
         my $pid = fork // die "Could not fork: $!";
-        return $pid if $pid;
+        return push @pids => $pid if $pid;
 
         my $ok  = eval { $code->(); 1 };
         my $err = $@;

@@ -1,5 +1,8 @@
 {{$NEXT}}
 
+    - Fix some tests that were breaking Test2's IPC
+    - Fix missing PIPE->autoflush() on some platforms
+
 0.011     2020-12-12 22:01:30-08:00 America/Los_Angeles
 
     - Fix non-blocking mode in windows

@@ -5,7 +5,9 @@ BEGIN { *PIPE_BUF = Atomic::Pipe->can('PIPE_BUF') }
 my ($rh, $wh);
 pipe($rh, $wh);
 
-$wh->autoflush();
+my $old = select($wh);
+$| = 1;
+select $old;
 
 my $w = Atomic::Pipe->from_fh('>&=', $wh);
 

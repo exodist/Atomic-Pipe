@@ -344,6 +344,7 @@ sub eof { shift->{+STATE}->{EOF} ? 1 : 0 }
 
 sub read_message {
     my $self = shift;
+    my %params = @_;
 
     my $state = $self->{+STATE} //= {};
 
@@ -400,15 +401,26 @@ sub read_message {
         my $id = $key->{id};
         my $tag = join ':' => @{$key}{qw/pid tid/};
         $state->{buffers}->{$tag} = $state->{buffers}->{$tag} ? $state->{buffers}->{$tag} . $state->{d_buffer} : $state->{d_buffer};
+        push @{$state->{parts}->{$tag} //= []} => $id;
 
         %$state = (
             buffers => $state->{buffers},
+            parts   => $state->{parts},
             EOF     => $state->{EOF},
         );
 
         next unless $id == 0;
         my $message = delete $state->{buffers}->{$tag};
-        return $message;
+        my $parts   = delete $state->{parts}->{$tag};
+
+        return $message unless $params{debug};
+
+        return {
+            message => $message,
+            parts   => $parts,
+            pid     => $key->{pid},
+            tid     => $key->{tid},
+        };
     }
 }
 
