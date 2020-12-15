@@ -11,7 +11,7 @@ BEGIN {
 my ($r, $w) = Atomic::Pipe->pair;
 
 my $start = time;
-worker { sleep 10; $w->write_message("aaa\n") };
+worker { note_sleep 10; $w->write_message("aaa\n") };
 
 sleep 2 if $^O eq 'MSWin32';
 
@@ -22,7 +22,7 @@ is($msg, "aaa\n", "got the message");
 cleanup();
 
 $start = time;
-worker { sleep 10; $w->write_message("bbb\n") };
+worker { note_sleep 10; $w->write_message("bbb\n") };
 
 sleep 2 if $^O eq 'MSWin32';
 
