@@ -1,5 +1,7 @@
 {{$NEXT}}
 
+    - Add mixed_data_mode (get_line_burst_or_data)
+
 0.013     2020-12-15 00:07:22-08:00 America/Los_Angeles
 
     - Add non-blocking write (*nix, and windows too!)
