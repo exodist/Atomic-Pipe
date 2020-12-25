@@ -1,5 +1,11 @@
 {{$NEXT}}
 
+    - Fix some bugs in mixed_data mode
+    - Better EOF detection (not trustworthy before this fix)
+    - get_line_burst_or_data fixes:
+        - Return partial lines at EOF (line without newline termination)
+        - Report incomplete messages or partial bursts (as exceptions)
+
 0.014     2020-12-21 19:44:01-08:00 America/Los_Angeles
 
     - Add mixed_data_mode (get_line_burst_or_data)

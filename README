@@ -313,9 +313,14 @@ METHODS
       Write any buffered items. This is only useful on writers that are in
       non-blocking mode, it is a no-op everywhere else.
 
-    $bool = $p->eof
+    $bool = $r->eof()
 
-      True if EOF (all writers are closed).
+      True if all writers are closed, and the buffers do not contain any
+      usable data.
+
+      Usable data means raw data that has yet to be processed, complete
+      messages, or complete data bursts. Any of these can still be
+      retreieved using read_message(), or get_line_burst_or_data().
 
     $p->close
 

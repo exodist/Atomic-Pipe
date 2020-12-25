@@ -35,6 +35,7 @@ use Scalar::Util qw/blessed/;
 
 use constant RH             => 'rh';
 use constant WH             => 'wh';
+use constant EOF            => 'eof';
 use constant STATE          => 'state';
 use constant OUT_BUFFER     => 'out_buffer';
 use constant READ_BLOCKING  => 'read_blocking';
@@ -45,8 +46,20 @@ use constant ADJUSTED_DSIZE => 'adjusted_dsize';
 use constant MESSAGE_KEY    => 'message_key';
 use constant MIXED_BUFFER   => 'mixed_buffer';
 
-sub wh { shift->{+WH} }
-sub rh { shift->{+RH} }
+sub wh  { shift->{+WH} }
+sub rh  { shift->{+RH} }
+
+sub eof {
+    my $self = shift;
+    return 0 unless $self->{+EOF};
+
+    if (my $buffer = $self->{+MIXED_BUFFER}) {
+        return 0 if defined $buffer->{raw} && length $buffer->{raw};
+        return 0 if defined $buffer->{lines} && length $buffer->{lines};
+    }
+
+    return 1;
+}
 
 sub _get_tid {
     return 0 unless $INC{'threads.pm'};
@@ -195,27 +208,43 @@ sub get_line_burst_or_data {
     while (1) {
         my $start = length($buffer->{raw} //= '');
 
-        if (IS_WIN32) {
-            if (my $size = $self->_win32_pipe_ready()) {
-                $size = $params{read_size} if $params{read_size} && $params{read_size} < $size;
-                my $x = '';
-                sysread($rh, $x, $size);
-                $buffer->{raw} .= $x;
+        unless ($self->{+EOF}) {
+            my ($got, $size);
+
+            if (IS_WIN32) {
+                if ($size = $self->_win32_pipe_ready()) {
+                    $size = $params{read_size} if $params{read_size} && $params{read_size} < $size;
+                    my $rbuff = '';
+                    $got = sysread($rh, $rbuff, $size);
+                    $buffer->{raw} .= $rbuff if $got;
+                }
+            }
+            else {
+                $size = $params{read_size} // PIPE_BUF;
+                my $rbuff = '';
+                $got = sysread($rh, $rbuff, $size);
+                $buffer->{raw} .= $rbuff if $got;
+
+                $self->{+EOF} = 1 if $size && defined($got) && $got == 0;
             }
         }
-        elsif (my $size = $params{read_size}) {
-            my $x = '';
-            sysread($rh, $x, $size);
-            $buffer->{raw} .= $x;
-        }
-        else {
-            local $/;
-            $buffer->{raw} .= <$rh> // '';
+
+        unless (length($buffer->{raw}) || $buffer->{do_extra_loop}) {
+            if ($self->{+EOF}) {
+                return (line => delete $buffer->{lines}) if $buffer->{lines};
+
+                die "Incomplete burst data received before end of pipe"
+                    if $buffer->{in_burst} || $buffer->{in_message};
+
+                if (my $state = $self->{+STATE}) {
+                    die "Incomplete message received before end of pipe"
+                        if keys(%{$state->{buffers}}) || keys (%{$state->{parts}});
+                }
+            }
+
+            return ();
         }
 
-        my $delta = length($buffer->{raw}) - $start;
-
-        return () unless length($buffer->{raw}) || $buffer->{do_extra_loop};
         $buffer->{do_extra_loop}-- if $buffer->{do_extra_loop};
 
         if ($buffer->{strip_term}) {
@@ -225,10 +254,7 @@ sub get_line_burst_or_data {
             next;
         }
         elsif ($buffer->{in_message}) {
-            my $state = $buffer->{+STATE} //= {};
-
             my ($id, $message) = $self->_extract_message(
-                state => $state,
                 one_part_only => 1,
                 read => sub {
                     if (bytes::length($buffer->{raw}) >= $_[1]) {
@@ -294,6 +320,8 @@ sub get_line_burst_or_data {
                 return (line => "${linedata}${term}");
             }
 
+            return (line => $linedata) if $self->{+EOF} && defined($linedata) && length($linedata);
+
             # No line found, put the linedata back in the buffer
             $buffer->{lines} = $linedata;
         }
@@ -333,6 +361,8 @@ sub _win32_pipe_ready {
     my $remain = pack('L', 0);
 
     my $ret = $peek_named_pipe->Call($wh, $buf, $buflen, $got, $avail, $remain);
+
+    $self->{+EOF} = 1 if $ret == 0;
 
     return unpack('L', $avail);
 }
@@ -638,15 +668,9 @@ sub write_message {
     return $parts;
 }
 
-sub eof { shift->{+STATE}->{EOF} ? 1 : 0 }
-
 sub read_message {
     my $self = shift;
     my %params = @_;
-
-    my $state = $self->{+STATE} //= {};
-
-    return if $state->{EOF};
 
     my $rh = $self->{+RH} or croak "Not a reader";
 
@@ -656,10 +680,11 @@ sub read_message {
 
     my ($id, $out) = $self->_extract_message(
         %params,
-        state => $state,
         read => sub {
+            return 0 if $self->{+EOF};
             my $buffer = '';
             my $out = sysread($rh, $buffer, $_[1]);
+            $self->{+EOF} = 1 if $_[1] && defined($out) && $out == 0;
             $_[0] //= '';
             $_[0] .= $buffer if $out;
             return $out;
@@ -673,8 +698,9 @@ sub read_message {
 sub _extract_message {
     my $self   = shift;
     my %params = @_;
-    my $state  = $params{state};
     my $read   = $params{read};
+
+    my $state = $self->{+STATE} //= {};
 
     while (1) {
         my $pb_size = $state->{pb_size} //= 0;
@@ -686,10 +712,7 @@ sub _extract_message {
                 croak "Error $!";
             }
 
-            unless ($read) {
-                $state->{EOF} = 1;
-                return;
-            }
+            return unless $read;
 
             $pb_size = $state->{pb_size} += $read;
         }
@@ -710,10 +733,7 @@ sub _extract_message {
                 croak "Error $!";
             }
 
-            unless ($read) {
-                $state->{EOF} = 1;
-                return;
-            }
+            return unless $read;
 
             $db_size = $state->{db_size} += $read;
         }
@@ -726,7 +746,6 @@ sub _extract_message {
         %$state = (
             buffers => $state->{buffers},
             parts   => $state->{parts},
-            EOF     => $state->{EOF},
         );
 
         unless ($id == 0) {
@@ -1079,9 +1098,13 @@ chunks/bursts in the buffer it will block until all can be written.
 Write any buffered items. This is only useful on writers that are in
 non-blocking mode, it is a no-op everywhere else.
 
-=item $bool = $p->eof
+=item $bool = $r->eof()
 
-True if EOF (all writers are closed).
+True if all writers are closed, and the buffers do not contain any usable data.
+
+Usable data means raw data that has yet to be processed, complete messages, or
+complete data bursts. Any of these can still be retreieved using
+C<read_message()>, or C<get_line_burst_or_data()>.
 
 =item $p->close
 
