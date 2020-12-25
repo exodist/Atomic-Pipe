@@ -1,5 +1,10 @@
 {{$NEXT}}
 
+    - MASSIVE PERFORMANCE IMPROVEMENTS
+    - Rewrite to use an internal buffer to reduce sysread calls
+    - Fix incorrect assumptions about data recieved from pipe (it is always treated as bytes)
+    - If internal state is messed up all future operations throw the error.
+
 0.015     2020-12-24 19:53:36-08:00 America/Los_Angeles
 
     - Fix some bugs in mixed_data mode
