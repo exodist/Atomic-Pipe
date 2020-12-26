@@ -278,11 +278,6 @@ include the necessary control characters.
     this will return undef. This will also return undef when the pipe is closed
     (EOF).
 
-- $count = $self->parts\_needed($data)
-
-    Get the number of parts the data will be split into for it to be written in
-    atomic chunks.
-
 - $p->blocking($bool)
 - $bool = $p->blocking
 
