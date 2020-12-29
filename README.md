@@ -330,6 +330,22 @@ include the necessary control characters.
 
     Get the read or write handles.
 
+- $read\_size = $p->read\_size()
+- $p->read\_size($read\_size)
+
+    Get/set the read size. This is how much data to ATTEMPT to read each time
+    `fill_buffer()` is called. The default is 65,536 which is the default pipe
+    size on linux, though the value is hardcoded currently.
+
+- $bytes = $p->fill\_buffer
+
+    Read a chunk of data from the pipe and store it in the internal buffer. Bytes
+    read are returned. This is only useful if you want to pull data out of the pipe
+    (maybe to unblock the writer?) but do not want to process any of the data yet.
+
+    This is automatically called as needed by other methods, usually you do not
+    need to use it directly.
+
 ### RESIZING THE PIPE BUFFER
 
 On some newer linux systems it is possible to get/set the pipe size. On
