@@ -39,8 +39,10 @@ BEGIN {
     }
 
     {
-        my $read_size = min(SSIZE_MAX(), (1024 * 1024));
-        *READ_SIZE = sub() { $read_size };
+        # Using the default pipe size as a read size is significantly faster
+        # than a larger value on my test machine.
+        my $read_size = min(SSIZE_MAX(), 65_536);
+        *DEFAULT_READ_SIZE = sub() { $read_size };
     }
 
     my $can_thread = 1;
@@ -76,6 +78,7 @@ BEGIN {
     }
 }
 
+use constant READ_SIZE      => 'read_size';
 use constant RH             => 'rh';
 use constant WH             => 'wh';
 use constant EOF            => 'eof';
@@ -102,7 +105,13 @@ sub throw_invalid {
     confess "Pipe is in an invalid state '$self->{+INVALID_STATE}'";
 }
 
-sub _fill_buffer {
+sub read_size {
+    my $self = shift;
+    ($self->{+READ_SIZE}) = @_ if @_;
+    return $self->{+READ_SIZE} ||= DEFAULT_READ_SIZE();
+}
+
+sub fill_buffer {
     my $self = shift;
 
     $self->throw_invalid() if $self->{+INVALID_STATE};
@@ -113,7 +122,7 @@ sub _fill_buffer {
 
     $self->{+IN_BUFFER_SIZE} //= 0;
 
-    my $to_read = READ_SIZE();
+    my $to_read = $self->{+READ_SIZE} || DEFAULT_READ_SIZE();
     if (IS_WIN32 && defined($self->{+READ_BLOCKING}) && !$self->{+READ_BLOCKING}) {
         $to_read = min($self->_win32_pipe_ready(), READ_SIZE());
     }
@@ -139,6 +148,8 @@ sub _fill_buffer {
             return 0;
         }
     }
+
+    return 0;
 }
 
 sub _get_from_buffer  { $_[0]->_from_buffer($_[1], remove => 1) }
@@ -149,17 +160,24 @@ sub _from_buffer {
     my ($size, %params) = @_;
 
     unless ($self->{+IN_BUFFER_SIZE} && $self->{+IN_BUFFER_SIZE} >= $size) {
-        $self->_fill_buffer;
+        $self->fill_buffer;
         unless($self->{+IN_BUFFER_SIZE} >= $size) {
             return unless $params{eof_invalid} && $self->{+EOF};
             $self->throw_invalid($params{eof_invalid});
         }
     }
 
-    return substr($self->{+IN_BUFFER}, 0, $size) unless $params{remove};
+    my $out;
 
-    $self->{+IN_BUFFER_SIZE} -= $size;
-    return substr($self->{+IN_BUFFER}, 0, $size, '');
+    if ($params{remove}) {
+        $self->{+IN_BUFFER_SIZE} -= $size;
+        $out = substr($self->{+IN_BUFFER}, 0, $size, '');
+    }
+    else {
+        $out = substr($self->{+IN_BUFFER}, 0, $size);
+    }
+
+    return $out;
 }
 
 sub eof {
@@ -167,7 +185,7 @@ sub eof {
 
     $self->throw_invalid() if $self->{+INVALID_STATE};
 
-    return 0 if $self->_fill_buffer;
+    return 0 if $self->fill_buffer;
     return 0 unless $self->{+EOF};
     return 0 if $self->{+IN_BUFFER_SIZE};
 
@@ -330,7 +348,7 @@ sub get_line_burst_or_data {
             ($line, $term, $buffer->{lines}) = split /(\r?\n|\r\n?)/, $buffer->{lines}, 2;
 
             return (line => "${line}${term}") if $term;
-            return (line => $line) if $self->{+EOF} && defined($line) && length($line);
+            return (line => $line) if $self->{+EOF} && !$self->{+IN_BUFFER_SIZE} && defined($line) && length($line);
 
             $buffer->{lines} = $line;
         }
@@ -339,7 +357,7 @@ sub get_line_burst_or_data {
             my ($id, $message) = $self->_extract_message(one_part_only => 1);
 
             unless(defined $id) {
-                next unless $self->{+EOF};
+                next unless $self->{+EOF} && !$self->{+IN_BUFFER_SIZE};
                 $self->throw_invalid('Incomplete burst data received before end of pipe');
             }
 
@@ -383,7 +401,7 @@ sub get_line_burst_or_data {
             $self->throw_invalid('Incomplete burst data received before end of pipe') if $self->{+EOF};
         }
 
-        unless ($self->{+IN_BUFFER_SIZE} || $self->_fill_buffer()) {
+        unless ($self->{+IN_BUFFER_SIZE} || $self->fill_buffer()) {
             return unless $self->{+EOF};
 
             # Do at least one more iteration after EOF
@@ -399,7 +417,7 @@ sub get_line_burst_or_data {
         $buffer->{lines} .= $linedata if defined $linedata;
 
         if ($buffer->{in_burst}) {
-            $self->{+IN_BUFFER_SIZE} -= length($linedata);
+            $self->{+IN_BUFFER_SIZE} -= length($linedata) + length($buffer->{in_burst});
         }
         else {
             $self->{+IN_BUFFER_SIZE} = 0;
@@ -1159,6 +1177,23 @@ of 512 bytes on systems that support atomic pipes accoring to POSIX).
 =item $fh = $p->wh
 
 Get the read or write handles.
+
+=item $read_size = $p->read_size()
+
+=item $p->read_size($read_size)
+
+Get/set the read size. This is how much data to ATTEMPT to read each time
+C<fill_buffer()> is called. The default is 65,536 which is the default pipe
+size on linux, though the value is hardcoded currently.
+
+=item $bytes = $p->fill_buffer
+
+Read a chunk of data from the pipe and store it in the internal buffer. Bytes
+read are returned. This is only useful if you want to pull data out of the pipe
+(maybe to unblock the writer?) but do not want to process any of the data yet.
+
+This is automatically called as needed by other methods, usually you do not
+need to use it directly.
 
 =back
 

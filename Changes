@@ -1,5 +1,10 @@
 {{$NEXT}}
 
+    - Fix off-by-1 bug in get_line_burst_or_data
+    - Pick a better default read size
+    - Make read size configurable
+    - expose fill_buffer()
+
 0.016     2020-12-25 23:43:43-08:00 America/Los_Angeles
 
     - MASSIVE PERFORMANCE IMPROVEMENTS
