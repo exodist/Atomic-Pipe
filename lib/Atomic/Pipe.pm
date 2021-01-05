@@ -2,7 +2,7 @@ package Atomic::Pipe;
 use strict;
 use warnings;
 
-our $VERSION = '0.019';
+our $VERSION = '0.020';
 
 use IO();
 use Fcntl();
