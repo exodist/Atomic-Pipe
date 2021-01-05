@@ -1,5 +1,10 @@
 {{$NEXT}}
 
+    - Add 'pending_data' method
+    - Avoid infinite loop on disconnected pipe with a non-fatal SIGPIPE handler
+    - Detect reader disconnect on windows
+    - Better reader disconnect detection all around
+
 0.018     2020-12-29 15:29:31-08:00 America/Los_Angeles
 
     - Fix windows bug
