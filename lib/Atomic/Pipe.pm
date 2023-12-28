@@ -191,8 +191,8 @@ sub eof {
     return 0 if $self->{+IN_BUFFER_SIZE};
 
     if (my $buffer = $self->{+MIXED_BUFFER}) {
-        return 0 if $buffer->{lines} || length $buffer->{lines};
-        return 0 if $buffer->{burst} || length $buffer->{burst};
+        return 0 if $buffer->{lines} || defined($buffer->{lines}) && length($buffer->{lines});
+        return 0 if $buffer->{burst} || defined($buffer->{lines}) && length($buffer->{burst});
     }
 
     return 1;
