@@ -3,12 +3,6 @@ use Atomic::Pipe;
 use Time::HiRes qw/sleep/;
 BEGIN { *PIPE_BUF = Atomic::Pipe->can('PIPE_BUF') }
 
-BEGIN {
-    my $path = __FILE__;
-    $path =~ s{[^/]+\.t$}{worker.pm};
-    require "./$path";
-}
-
 subtest peek_line => sub {
     my ($r, $w) = Atomic::Pipe->pair(mixed_data_mode => 1);
     my $wh = $w->wh;
