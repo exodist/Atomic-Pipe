@@ -344,7 +344,7 @@ sub get_line_burst_or_data {
 
     while (1) {
         $self->throw_invalid('Incomplete message received before EOF')
-            if $self->{+EOF} && (keys(%{$self->{+STATE}->{buffers}}) || keys (%{$self->{+STATE}->{parts}}));
+            if $self->eof && (keys(%{$self->{+STATE}->{buffers}}) || keys (%{$self->{+STATE}->{parts}}));
 
         if($buffer->{lines} || length($buffer->{lines})) {
             # Look for a complete line
