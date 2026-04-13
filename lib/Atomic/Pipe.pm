@@ -8,6 +8,15 @@ use IO();
 use Fcntl();
 use bytes();
 
+BEGIN {
+    if (eval { require IO::Select; 1 }) {
+        *HAVE_IO_SELECT = sub() { 1 };
+    }
+    else {
+        *HAVE_IO_SELECT = sub() { 0 };
+    }
+}
+
 use Carp qw/croak confess/;
 use Config qw/%Config/;
 use List::Util qw/min/;
@@ -96,6 +105,7 @@ use constant MIXED_BUFFER   => 'mixed_buffer';
 use constant DELIMITER_SIZE => 'delimiter_size';
 use constant INVALID_STATE  => 'invalid_state';
 use constant HIT_EPIPE      => 'hit_epipe';
+use constant USE_IO_SELECT  => 'use_io_select';
 
 sub wh  { shift->{+WH} }
 sub rh  { shift->{+RH} }
@@ -112,6 +122,18 @@ sub read_size {
     return $self->{+READ_SIZE} ||= DEFAULT_READ_SIZE();
 }
 
+sub use_io_select {
+    my $self = shift;
+    if (@_) {
+        croak "IO::Select is not installed, cannot enable use_io_select" if $_[0] && !HAVE_IO_SELECT;
+        $self->{+USE_IO_SELECT} = $_[0] ? 1 : 0;
+        delete $self->{_select} unless $_[0];
+    }
+    return 0 unless HAVE_IO_SELECT;
+    my $val = $self->{+USE_IO_SELECT};
+    return defined($val) ? ($val ? 1 : 0) : IS_WIN32 ? 0 : 1;
+}
+
 sub fill_buffer {
     my $self = shift;
 
@@ -124,18 +146,30 @@ sub fill_buffer {
     $self->{+IN_BUFFER_SIZE} //= 0;
 
     my $to_read = $self->{+READ_SIZE} || DEFAULT_READ_SIZE();
-    if (IS_WIN32 && defined($self->{+READ_BLOCKING}) && !$self->{+READ_BLOCKING}) {
+
+    my $use_select = $self->use_io_select;
+
+    if ($use_select) {
+        my $sel = $self->{_select} //= IO::Select->new($rh);
+        my $blocking = $self->{+READ_BLOCKING} // 1;
+        my @ready = $sel->can_read($blocking ? undef : 0);
+        return 0 unless @ready;
+    }
+    elsif (IS_WIN32 && defined($self->{+READ_BLOCKING}) && !$self->{+READ_BLOCKING}) {
         $to_read = min($self->_win32_pipe_ready(), $to_read);
     }
 
     return 0 unless $to_read;
 
-    while(1) {
+    while (1) {
         my $rbuff = '';
         my $got = sysread($rh, $rbuff, $to_read);
         unless(defined $got) {
             return 0 if $! == EAGAIN; # NON-BLOCKING
-            next if $RETRY_ERRNO{0 + $!}; # interrupted or something, try again
+            if ($RETRY_ERRNO{0 + $!}) {
+                next unless $use_select; # retry on EINTR in fallback mode
+                return 0;               # IO::Select handles EINTR
+            }
             $self->throw_invalid("$!");
         }
 
@@ -220,10 +254,16 @@ sub _mode_to_dir {
     return $MODE_TO_DIR{$mode};
 }
 
+sub _check_params {
+    my ($class, %params) = @_;
+    croak "IO::Select is not installed, cannot enable use_io_select" if $params{+USE_IO_SELECT} && !HAVE_IO_SELECT;
+}
+
 sub read_fifo {
     my $class = shift;
     my ($fifo, %params) = @_;
 
+    $class->_check_params(%params);
     croak "File '$fifo' is not a pipe (-p check)" unless -p $fifo;
 
     open(my $fh, '+<', $fifo) or die "Could not open fifo ($fifo) for reading: $!";
@@ -236,6 +276,7 @@ sub write_fifo {
     my $class = shift;
     my ($fifo, %params) = @_;
 
+    $class->_check_params(%params);
     croak "File '$fifo' is not a pipe (-p check)" unless -p $fifo;
 
     open(my $fh, '>', $fifo) or die "Could not open fifo ($fifo) for writing: $!";
@@ -277,6 +318,8 @@ sub new {
     my $class = shift;
     my (%params) = @_;
 
+    $class->_check_params(%params);
+
     my ($rh, $wh);
     pipe($rh, $wh) or die "Could not create pipe: $!";
 
@@ -289,6 +332,8 @@ sub new {
 sub pair {
     my $class = shift;
     my (%params) = @_;
+
+    $class->_check_params(%params);
 
     my $mixed = delete $params{mixed_data_mode};
 
@@ -1039,6 +1084,12 @@ include the necessary control characters.
 
 Get the maximum number of bytes for an atomic write to a pipe.
 
+=item $bool = Atomic::Pipe->HAVE_IO_SELECT
+
+True if L<IO::Select> is available on this system. When available, it is used by
+default in C<fill_buffer()> to efficiently wait for pipe readability instead of
+relying on blocking C<sysread()> with an EINTR retry loop.
+
 =item ($r, $w) = Atomic::Pipe->pair
 
 Create a pipe, returns a list consisting of a reader and a writer.
@@ -1212,6 +1263,19 @@ Get the read or write handles.
 Get/set the read size. This is how much data to ATTEMPT to read each time
 C<fill_buffer()> is called. The default is 65,536 which is the default pipe
 size on linux, though the value is hardcoded currently.
+
+=item $bool = $p->use_io_select
+
+=item $p->use_io_select($bool)
+
+Get/Set whether this pipe instance uses L<IO::Select> for readability checks in
+C<fill_buffer()>. When true (and IO::Select is available), C<fill_buffer()> uses
+C<< IO::Select->can_read() >> to wait for data. When false, it falls back to a
+blocking C<sysread()> with an EINTR retry loop.
+
+Defaults to true if IO::Select is installed (false on Windows, where
+C<PeekNamedPipe> is used instead). Can also be passed as a constructor
+parameter, e.g. C<< Atomic::Pipe->pair(use_io_select => 0) >>.
 
 =item $bytes = $p->fill_buffer
 

@@ -185,6 +185,12 @@ include the necessary control characters.
 
     Get the maximum number of bytes for an atomic write to a pipe.
 
+- $bool = Atomic::Pipe->HAVE\_IO\_SELECT
+
+    True if [IO::Select](https://metacpan.org/pod/IO%3A%3ASelect) is available on this system. When available, it is used by
+    default in `fill_buffer()` to efficiently wait for pipe readability instead of
+    relying on blocking `sysread()` with an EINTR retry loop.
+
 - ($r, $w) = Atomic::Pipe->pair
 
     Create a pipe, returns a list consisting of a reader and a writer.
@@ -341,6 +347,18 @@ include the necessary control characters.
     Get/set the read size. This is how much data to ATTEMPT to read each time
     `fill_buffer()` is called. The default is 65,536 which is the default pipe
     size on linux, though the value is hardcoded currently.
+
+- $bool = $p->use\_io\_select
+- $p->use\_io\_select($bool)
+
+    Get/Set whether this pipe instance uses [IO::Select](https://metacpan.org/pod/IO%3A%3ASelect) for readability checks in
+    `fill_buffer()`. When true (and IO::Select is available), `fill_buffer()` uses
+    `IO::Select->can_read()` to wait for data. When false, it falls back to a
+    blocking `sysread()` with an EINTR retry loop.
+
+    Defaults to true if IO::Select is installed (false on Windows, where
+    `PeekNamedPipe` is used instead). Can also be passed as a constructor
+    parameter, e.g. `Atomic::Pipe->pair(use_io_select => 0)`.
 
 - $bytes = $p->fill\_buffer
 

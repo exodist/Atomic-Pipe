@@ -8,57 +8,68 @@ BEGIN {
     require "./$path";
 }
 
-my ($r, $w) = Atomic::Pipe->pair;
-
-$r->blocking(1);
-$w->blocking(0);
-
-worker { note_sleep 10; while (my $msg = $r->read_message) { last if $msg =~ m/END/i } };
-
-my $count = 0;
-my $start = time;
-until ($w->{out_buffer} && @{$w->{out_buffer}}) {
-    $w->resize(PIPE_BUF * 2);    # Might not work, but nicer on systems where it does
-    $w->write_message("aa" x PIPE_BUF);
-    $count++;
-
-    next unless $count > 1000;
-    fail "Count got too high!";
-    last;
-}
-ok(time - $start < 8, "Did not block");
-
-$w->write_message("END");
-
-# Clear the buffer
-while (@{$w->{out_buffer}}) {
-    $w->flush;
+BEGIN {
+    my $path = __FILE__;
+    $path =~ s{[^/]+\.t$}{select_mode.pm};
+    require "./$path";
 }
 
-ok(1, "Was able to flush the buffer");
+for my $use_select (io_select_modes()) {
+    subtest "use_io_select=$use_select" => sub {
+        my ($r, $w) = Atomic::Pipe->pair(use_io_select => $use_select);
 
-cleanup();
+        $r->blocking(1);
+        $w->blocking(0);
 
-# Also checks the blocking flush on destroy
-worker { sleep 1; $w->write_message("zz" x PIPE_BUF); do { $w = undef } };
-my $msg = $r->read_message;
-is($msg, "zz" x PIPE_BUF, "Got expected message when writing is non-blocking");
+        worker { note_sleep 10; while (my $msg = $r->read_message) { last if $msg =~ m/END/i } };
 
-cleanup();
+        my $count = 0;
+        my $start = time;
+        until ($w->{out_buffer} && @{$w->{out_buffer}}) {
+            $w->resize(PIPE_BUF * 2);    # Might not work, but nicer on systems where it does
+            $w->write_message("aa" x PIPE_BUF);
+            $count++;
 
-worker { note_sleep 10; while (my $msg = $r->read_message) { last if $msg =~ m/END/i } };
+            next unless $count > 1000;
+            fail "Count got too high!";
+            last;
+        }
+        ok(time - $start < 8, "Did not block");
 
-$w->blocking(1);
+        $w->write_message("END");
 
-$start = time;
-for ( 0 .. $count ) {
-    $w->write_message("aa" x PIPE_BUF);
+        # Clear the buffer
+        while (@{$w->{out_buffer}}) {
+            $w->flush;
+        }
+
+        ok(1, "Was able to flush the buffer");
+
+        cleanup();
+
+        # Also checks the blocking flush on destroy
+        worker { sleep 1; $w->write_message("zz" x PIPE_BUF); do { $w = undef } };
+        my $msg = $r->read_message;
+        is($msg, "zz" x PIPE_BUF, "Got expected message when writing is non-blocking");
+
+        cleanup();
+
+        worker { note_sleep 10; while (my $msg = $r->read_message) { last if $msg =~ m/END/i } };
+
+        $w->blocking(1);
+
+        $start = time;
+        for ( 0 .. $count ) {
+            $w->write_message("aa" x PIPE_BUF);
+        }
+        ok(time - $start > 5, "Blocked");
+
+        $w->write_message("END");
+
+        delete $w->{out_buffer};
+
+        cleanup();
+    };
 }
-ok(time - $start > 5, "Blocked");
 
-$w->write_message("END");
-
-delete $w->{out_buffer};
-
-cleanup();
 done_testing;

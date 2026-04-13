@@ -8,29 +8,40 @@ BEGIN {
     require "./$path";
 }
 
-my ($r, $w) = Atomic::Pipe->pair;
+BEGIN {
+    my $path = __FILE__;
+    $path =~ s{[^/]+\.t$}{select_mode.pm};
+    require "./$path";
+}
 
-my $start = time;
-worker { note_sleep 10; $w->write_message("aaa\n") };
+for my $use_select (io_select_modes()) {
+    subtest "use_io_select=$use_select" => sub {
+        my ($r, $w) = Atomic::Pipe->pair(use_io_select => $use_select);
 
-sleep 2 if $^O eq 'MSWin32';
+        my $start = time;
+        worker { note_sleep 10; $w->write_message("aaa\n") };
 
-my $msg = $r->read_message;
-ok(time - $start > 6, "Blocked");
-is($msg, "aaa\n", "got the message");
+        sleep 2 if $^O eq 'MSWin32';
 
-cleanup();
+        my $msg = $r->read_message;
+        ok(time - $start > 6, "Blocked");
+        is($msg, "aaa\n", "got the message");
 
-$start = time;
-worker { note_sleep 10; $w->write_message("bbb\n") };
+        cleanup();
 
-sleep 2 if $^O eq 'MSWin32';
+        $start = time;
+        worker { note_sleep 10; $w->write_message("bbb\n") };
 
-$r->blocking(0);
+        sleep 2 if $^O eq 'MSWin32';
 
-$msg = $r->read_message;
-ok(time - $start < 8, "Did not spend too much time waiting");
-ok(!$msg, "No message (did not block)");
+        $r->blocking(0);
 
-cleanup();
+        $msg = $r->read_message;
+        ok(time - $start < 8, "Did not spend too much time waiting");
+        ok(!$msg, "No message (did not block)");
+
+        cleanup();
+    };
+}
+
 done_testing;
