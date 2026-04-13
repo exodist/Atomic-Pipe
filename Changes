@@ -1,5 +1,7 @@
 {{$NEXT}}
 
+0.024     2026-04-12 18:28:48-07:00 America/Los_Angeles
+
     - Use IO::Select in fill_buffer() for efficient readability polling
     - IO::Select is now an optional (recommended) dependency
     - Added use_io_select attribute to toggle IO::Select on/off per instance
