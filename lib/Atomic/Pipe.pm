@@ -559,11 +559,11 @@ sub write_blocking {
         $self->_win32_set_pipe_state(@_) if @_;
     }
     else {
-        my $flags = 0;
-        fcntl($wh, &Fcntl::F_GETFL, $flags) || die $!;    # Get the current flags on the filehandle
-        if   ($val) { $flags ^= &Fcntl::O_NONBLOCK }      # Remove non-blocking
-        else        { $flags |= &Fcntl::O_NONBLOCK }      # Add non-blocking to the flags
-        fcntl($wh, &Fcntl::F_SETFL, $flags) || die $!;    # Set the flags on the filehandle
+        my $flags = fcntl($wh, &Fcntl::F_GETFL, 0);    # Get the current flags
+        die $! unless defined $flags;
+        if   ($val) { $flags &= ~&Fcntl::O_NONBLOCK }  # Clear O_NONBLOCK
+        else        { $flags |= &Fcntl::O_NONBLOCK }   # Set O_NONBLOCK
+        fcntl($wh, &Fcntl::F_SETFL, $flags) || die $!;
     }
 
     return $self->{+WRITE_BLOCKING};
