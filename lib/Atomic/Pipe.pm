@@ -601,7 +601,9 @@ sub resize {
     return unless defined &Fcntl::F_SETPIPE_SZ;
     my $fh = $self->{+WH} // $self->{+RH};
 
-    fcntl($fh, Fcntl::F_SETPIPE_SZ(), $size);
+    # Force numeric: fcntl(F_SETPIPE_SZ, $string) is interpreted as
+    # buffer-mode and silently fails with EINVAL.
+    fcntl($fh, Fcntl::F_SETPIPE_SZ(), $size + 0);
 }
 
 my $ONE_MB = 1 * 1024 * 1024;
@@ -612,7 +614,11 @@ sub max_size {
     open(my $max, '<', '/proc/sys/fs/pipe-max-size') or return $ONE_MB;
     chomp(my $val = <$max>);
     close($max);
-    return $val || $ONE_MB;
+    # Force numeric. <$max> returns a string; passing it to
+    # fcntl(F_SETPIPE_SZ) directly triggers the same EINVAL bug
+    # resize() guards against. Numify here so any caller of
+    # max_size() that hands the result to fcntl gets an int.
+    return ($val + 0) || $ONE_MB;
 }
 
 sub resize_or_max {
