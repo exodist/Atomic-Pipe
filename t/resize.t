@@ -3,6 +3,7 @@ use Atomic::Pipe;
 use POSIX qw/mkfifo/;
 use File::Temp qw/tempdir/;
 use Fcntl ();
+use Errno qw/EPERM ENOMEM/;
 
 skip_all("F_SETPIPE_SZ not available") unless defined &Fcntl::F_SETPIPE_SZ;
 
@@ -19,6 +20,14 @@ skip_all("kernel cap matches default; resize is a no-op")
     if $before >= $max;
 
 my $ret = $p->resize_or_max($max);
+
+# Per-user pipe page budget (fs.pipe-user-pages-soft) can deny F_SETPIPE_SZ
+# with EPERM/ENOMEM when the user already has many large pipes open. That's
+# environmental, not a bug in resize_or_max, so skip rather than fail.
+if (!defined $ret && ($! == EPERM || $! == ENOMEM)) {
+    skip_all("kernel pipe-user-pages budget exhausted ($!); cannot grow pipe");
+}
+
 ok(defined $ret, "resize_or_max returned a defined value");
 is($ret, $max,   "resize_or_max returned the requested size");
 
@@ -41,6 +50,10 @@ mkfifo($f, 0700) or die "mkfifo: $!";
 my $p2 = Atomic::Pipe->read_fifo($f);
 my $rh = $p2->rh;
 my $r2 = fcntl($rh, &Fcntl::F_SETPIPE_SZ, $ms);
-ok(defined $r2, "raw fcntl(F_SETPIPE_SZ, max_size()) does not return undef");
+SKIP: {
+    skip "kernel pipe-user-pages budget exhausted ($!)", 1
+        if !defined $r2 && ($! == EPERM || $! == ENOMEM);
+    ok(defined $r2, "raw fcntl(F_SETPIPE_SZ, max_size()) does not return undef");
+}
 
 done_testing;
