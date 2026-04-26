@@ -44,7 +44,11 @@ my $ms = Atomic::Pipe->max_size;
 ok(defined $ms,    "max_size is defined");
 ok($ms =~ /^\d+\z/, "max_size has only digits (no trailing newline)");
 
-# Fresh fifo so we observe the raw fcntl path independently.
+# Fresh fifo so we observe the raw fcntl path independently. Free the
+# first pipe first so its pages are returned to the per-user pipe-pages
+# budget; otherwise the raw fcntl below can fail with EPERM/ENOMEM on
+# constrained smokers even though the value itself is well-formed.
+undef $p;
 unlink $f;
 mkfifo($f, 0700) or die "mkfifo: $!";
 my $p2 = Atomic::Pipe->read_fifo($f);

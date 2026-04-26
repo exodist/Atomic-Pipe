@@ -4,6 +4,17 @@ use Atomic::Pipe;
 plan skip_all => 'Compress::Zstd not installed'
     unless eval { require Compress::Zstd; 1 };
 
+# Older Compress::Zstd releases ship without the Context/Dictionary
+# submodules used by the dict-aware path. Probe once and skip those
+# subtests if any are missing so the rest of the suite still runs.
+my $HAVE_DICT = eval {
+    require Compress::Zstd::CompressionContext;
+    require Compress::Zstd::DecompressionContext;
+    require Compress::Zstd::CompressionDictionary;
+    require Compress::Zstd::DecompressionDictionary;
+    1;
+};
+
 subtest accessors_default => sub {
     my ($r, $w) = Atomic::Pipe->pair;
     is($r->compression,                  undef, 'compression undef by default');
@@ -176,7 +187,9 @@ subtest set_compression_validation => sub {
     );
 };
 
+
 subtest dictionary_bytes_roundtrip => sub {
+    plan skip_all => 'Compress::Zstd dictionary submodules unavailable' unless $HAVE_DICT;
     my $dict = ("the quick brown fox jumps over the lazy dog. " x 100);
     my ($r, $w) = Atomic::Pipe->pair(
         compression            => 'zstd',
@@ -191,6 +204,7 @@ subtest dictionary_bytes_roundtrip => sub {
 };
 
 subtest dictionary_file_roundtrip => sub {
+    plan skip_all => 'Compress::Zstd dictionary submodules unavailable' unless $HAVE_DICT;
     require File::Temp;
     my ($fh, $path) = File::Temp::tempfile(UNLINK => 1);
     my $dict_bytes = ("alpha bravo charlie delta echo " x 100);
@@ -210,6 +224,7 @@ subtest dictionary_file_roundtrip => sub {
 };
 
 subtest dictionary_setters => sub {
+    plan skip_all => 'Compress::Zstd dictionary submodules unavailable' unless $HAVE_DICT;
     require File::Temp;
     my ($r, $w) = Atomic::Pipe->pair(compression => 'zstd');
 
@@ -323,6 +338,7 @@ subtest keep_compressed_off_no_extra => sub {
 };
 
 subtest dictionary_mismatch => sub {
+    plan skip_all => 'Compress::Zstd dictionary submodules unavailable' unless $HAVE_DICT;
     # Note: zstd's raw (untrained) dictionaries don't embed a dict-ID, so a
     # mere mismatch silently yields garbage rather than an error. Verify
     # instead that the dict-aware decompress path still surfaces hard

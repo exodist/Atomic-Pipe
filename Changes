@@ -1,5 +1,16 @@
 {{$NEXT}}
 
+    - Skip dictionary subtests in t/compression.t when the
+      Compress::Zstd::{Compression,Decompression}{Context,Dictionary}
+      submodules are unavailable. Older Compress::Zstd releases ship
+      without them, which caused four CPAN-Testers FAIL reports under
+      perl 5.20/5.22/5.24.
+
+    - Free the first pipe in t/resize.t before opening the second fifo
+      for the raw fcntl(F_SETPIPE_SZ) sentinel, so the per-user
+      pipe-pages budget is released. Fixes intermittent test 7 FAILs
+      on smokers running multiple pipes in parallel.
+
 0.026     2026-04-26 01:25:04-07:00 America/Los_Angeles
 
     - Add optional Zstd compression (with optional shared dictionary, supplied
