@@ -1,5 +1,11 @@
 {{$NEXT}}
 
+    - Add optional Zstd compression (with optional shared dictionary, supplied
+      as raw bytes or a file path) for bursts and messages, plus a
+      `keep_compressed` flag that exposes the on-wire compressed bytes
+      alongside the decompressed payload. Compress::Zstd is a soft dependency
+      loaded only when compression is enabled.
+
 0.025     2026-04-25 10:08:57-07:00 America/Los_Angeles
 
     - Fix max_size returning a chomped string from

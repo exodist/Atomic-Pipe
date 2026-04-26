@@ -106,6 +106,11 @@ use constant DELIMITER_SIZE => 'delimiter_size';
 use constant INVALID_STATE  => 'invalid_state';
 use constant HIT_EPIPE      => 'hit_epipe';
 use constant USE_IO_SELECT  => 'use_io_select';
+use constant COMPRESSION                 => 'compression';
+use constant COMPRESSION_LEVEL           => 'compression_level';
+use constant COMPRESSION_DICTIONARY      => 'compression_dictionary';
+use constant COMPRESSION_DICTIONARY_FILE => 'compression_dictionary_file';
+use constant KEEP_COMPRESSED             => 'keep_compressed';
 
 sub wh  { shift->{+WH} }
 sub rh  { shift->{+RH} }
@@ -133,6 +138,12 @@ sub use_io_select {
     my $val = $self->{+USE_IO_SELECT};
     return defined($val) ? ($val ? 1 : 0) : IS_WIN32 ? 0 : 1;
 }
+
+sub compression                 { $_[0]->{+COMPRESSION} }
+sub compression_level           { $_[0]->{+COMPRESSION_LEVEL} }
+sub compression_dictionary      { $_[0]->{+COMPRESSION_DICTIONARY} }
+sub compression_dictionary_file { $_[0]->{+COMPRESSION_DICTIONARY_FILE} }
+sub keep_compressed             { $_[0]->{+KEEP_COMPRESSED} ? 1 : 0 }
 
 sub fill_buffer {
     my $self = shift;
@@ -215,6 +226,60 @@ sub _from_buffer {
     return $out;
 }
 
+sub _has_dict {
+    return defined($_[0]->{+COMPRESSION_DICTIONARY})
+        || defined($_[0]->{+COMPRESSION_DICTIONARY_FILE});
+}
+
+# NOTE: raw zstd dictionaries do not embed a dict-ID, so a mismatched peer
+# dict will silently decode to garbage rather than fail. Both ends must agree
+# on byte-identical dictionary content.
+sub _build_cdict {
+    my $self = shift;
+    my $level = $self->{+COMPRESSION_LEVEL} // 3;
+    require Compress::Zstd::CompressionDictionary;
+    if (defined(my $path = $self->{+COMPRESSION_DICTIONARY_FILE})) {
+        return Compress::Zstd::CompressionDictionary->new_from_file($path, $level);
+    }
+    return Compress::Zstd::CompressionDictionary->new($self->{+COMPRESSION_DICTIONARY}, $level);
+}
+
+sub _build_ddict {
+    my $self = shift;
+    require Compress::Zstd::DecompressionDictionary;
+    if (defined(my $path = $self->{+COMPRESSION_DICTIONARY_FILE})) {
+        return Compress::Zstd::DecompressionDictionary->new_from_file($path);
+    }
+    return Compress::Zstd::DecompressionDictionary->new($self->{+COMPRESSION_DICTIONARY});
+}
+
+sub _compress {
+    my ($self, $data) = @_;
+    if ($self->_has_dict) {
+        require Compress::Zstd::CompressionContext;
+        my $ctx   = $self->{_compression_ctx}   //= Compress::Zstd::CompressionContext->new;
+        my $cdict = $self->{_compression_cdict} //= $self->_build_cdict;
+        return $ctx->compress_using_dict($data, $cdict);
+    }
+    return Compress::Zstd::compress($data, $self->{+COMPRESSION_LEVEL} // 3);
+}
+
+sub _decompress {
+    my ($self, $data) = @_;
+    my $out;
+    if ($self->_has_dict) {
+        require Compress::Zstd::DecompressionContext;
+        my $ctx   = $self->{_decompression_ctx}   //= Compress::Zstd::DecompressionContext->new;
+        my $ddict = $self->{_decompression_ddict} //= $self->_build_ddict;
+        $out = $ctx->decompress_using_dict($data, $ddict);
+    }
+    else {
+        $out = Compress::Zstd::decompress($data);
+    }
+    $self->throw_invalid("zstd decompression failed") unless defined $out;
+    return $out;
+}
+
 sub eof {
     my $self = shift;
 
@@ -256,7 +321,21 @@ sub _mode_to_dir {
 
 sub _check_params {
     my ($class, %params) = @_;
-    croak "IO::Select is not installed, cannot enable use_io_select" if $params{+USE_IO_SELECT} && !HAVE_IO_SELECT;
+    croak "IO::Select is not installed, cannot enable use_io_select"
+        if $params{+USE_IO_SELECT} && !HAVE_IO_SELECT;
+
+    if (defined(my $algo = $params{+COMPRESSION})) {
+        croak "Unknown compression algorithm '$algo'" unless $algo eq 'zstd';
+        croak "compression => 'zstd' requires Compress::Zstd"
+            unless eval { require Compress::Zstd; 1 };
+    }
+
+    croak "compression_dictionary and compression_dictionary_file are mutually exclusive"
+        if defined($params{+COMPRESSION_DICTIONARY}) && defined($params{+COMPRESSION_DICTIONARY_FILE});
+
+    croak "compression_dictionary requires compression to be enabled"
+        if (defined($params{+COMPRESSION_DICTIONARY}) || defined($params{+COMPRESSION_DICTIONARY_FILE}))
+            && !defined($params{+COMPRESSION});
 }
 
 sub read_fifo {
@@ -366,6 +445,76 @@ sub set_mixed_data_mode {
     $self->{+MESSAGE_KEY}   //= "\x10";    # Data link escape
 }
 
+sub set_compression {
+    my $self = shift;
+    my ($algo, $level) = @_;
+
+    if (!defined $algo) {
+        delete $self->{+COMPRESSION};
+        delete $self->{+COMPRESSION_LEVEL};
+        delete $self->{_compression_ctx};
+        delete $self->{_compression_cdict};
+        delete $self->{_decompression_ctx};
+        delete $self->{_decompression_ddict};
+        return;
+    }
+
+    croak "Unknown compression algorithm '$algo'" unless $algo eq 'zstd';
+    croak "compression => 'zstd' requires Compress::Zstd"
+        unless eval { require Compress::Zstd; 1 };
+
+    $self->{+COMPRESSION}       = $algo;
+    # Omitted $level preserves the previously set level; pass undef to
+    # set_compression(undef) first if a full reset back to the default is desired.
+    $self->{+COMPRESSION_LEVEL} = $level if defined $level;
+
+    # Cached objects depend on level / dict; force rebuild.
+    delete $self->{_compression_ctx};
+    delete $self->{_compression_cdict};
+    delete $self->{_decompression_ctx};
+    delete $self->{_decompression_ddict};
+
+    return;
+}
+
+sub set_compression_dictionary {
+    my ($self, $bytes) = @_;
+    if (defined $bytes) {
+        croak "compression_dictionary requires compression to be enabled"
+            unless defined $self->{+COMPRESSION};
+        $self->{+COMPRESSION_DICTIONARY} = $bytes;
+        delete $self->{+COMPRESSION_DICTIONARY_FILE};
+    }
+    else {
+        delete $self->{+COMPRESSION_DICTIONARY};
+    }
+    delete $self->{_compression_cdict};
+    delete $self->{_decompression_ddict};
+    return;
+}
+
+sub set_compression_dictionary_file {
+    my ($self, $path) = @_;
+    if (defined $path) {
+        croak "compression_dictionary requires compression to be enabled"
+            unless defined $self->{+COMPRESSION};
+        $self->{+COMPRESSION_DICTIONARY_FILE} = $path;
+        delete $self->{+COMPRESSION_DICTIONARY};
+    }
+    else {
+        delete $self->{+COMPRESSION_DICTIONARY_FILE};
+    }
+    delete $self->{_compression_cdict};
+    delete $self->{_decompression_ddict};
+    return;
+}
+
+sub set_keep_compressed {
+    my ($self, $val) = @_;
+    $self->{+KEEP_COMPRESSED} = $val ? 1 : 0;
+    return;
+}
+
 sub get_line_burst_or_data {
     my $self = shift;
     my %params = @_;
@@ -413,7 +562,16 @@ sub get_line_burst_or_data {
 
             $buffer->{strip_term}++;
             $buffer->{in_message} = 0;
-            return (message => $message) if defined $message;
+            if (defined $message) {
+                if ($self->{+COMPRESSION}) {
+                    my $compressed   = $message;
+                    my $decompressed = $self->_decompress($compressed);
+                    return (message => $decompressed, compressed => $compressed)
+                        if $self->{+KEEP_COMPRESSED};
+                    return (message => $decompressed);
+                }
+                return (message => $message);
+            }
         }
 
         if ($buffer->{strip_term}) {
@@ -442,7 +600,14 @@ sub get_line_burst_or_data {
                 $self->{+IN_BUFFER_SIZE} = length($self->{+IN_BUFFER});
                 $buffer->{in_burst} = 0;
                 $buffer->{do_extra_loop}++;
-                return (burst => delete($buffer->{burst}));
+                my $compressed = delete $buffer->{burst};
+                if ($self->{+COMPRESSION}) {
+                    my $decompressed = $self->_decompress($compressed);
+                    return (burst => $decompressed, compressed => $compressed)
+                        if $self->{+KEEP_COMPRESSED};
+                    return (burst => $decompressed);
+                }
+                return (burst => $compressed);
             }
             else {
                 $self->{+IN_BUFFER_SIZE} = 0;
@@ -695,6 +860,8 @@ sub fits_in_burst {
     my $self = shift;
     my ($data) = @_;
 
+    $data = $self->_compress($data) if $self->{+COMPRESSION};
+
     my $size = bytes::length($data) + ($self->{+DELIMITER_SIZE} // $self->delimiter_size);
     return undef unless $size <= PIPE_BUF;
 
@@ -705,7 +872,11 @@ sub write_burst {
     my $self = shift;
     my ($data) = @_;
 
-    my $size = $self->fits_in_burst($data) // return undef;
+    $data = $self->_compress($data) if $self->{+COMPRESSION};
+
+    # Intentionally not delegating to fits_in_burst() — that would compress twice.
+    my $size = bytes::length($data) + ($self->{+DELIMITER_SIZE} // $self->delimiter_size);
+    return undef unless $size <= PIPE_BUF;
 
     push @{$self->{+OUT_BUFFER} //= []} => [$data, $size];
     $self->flush();
@@ -795,6 +966,8 @@ sub write_message {
     my $self = shift;
     my ($data) = @_;
 
+    $data = $self->_compress($data) if $self->{+COMPRESSION};
+
     my $tid            = _get_tid();
     my $message_key    = $self->{+MESSAGE_KEY}    // '';
     my $adjusted_dsize = $self->{+ADJUSTED_DSIZE} // $self->_adjusted_dsize;
@@ -837,8 +1010,22 @@ sub read_message {
 
     my ($id, $out) = $self->_extract_message(%params);
 
-    return $out if defined $id;
-    return;
+    return unless defined $id;
+
+    return $out unless $self->{+COMPRESSION};
+
+    if ($params{debug}) {
+        my $compressed = $out->{message};
+        $out->{message} = $self->_decompress($compressed);
+        $out->{compressed} = $compressed if $self->{+KEEP_COMPRESSED};
+        return $out;
+    }
+
+    my $compressed   = $out;
+    my $decompressed = $self->_decompress($compressed);
+
+    return ($decompressed, $compressed) if $self->{+KEEP_COMPRESSED} && wantarray;
+    return $decompressed;
 }
 
 sub _extract_message {
@@ -990,6 +1177,14 @@ Fork example from tests:
 
     done_testing;
 
+Optional Zstd compression for bursts and messages (both ends must agree):
+
+    my ($r, $w) = Atomic::Pipe->pair(compression => 'zstd');
+    $w->write_message($big_payload);   # compressed on the wire
+    my $msg = $r->read_message;        # decompressed transparently
+
+See L</COMPRESSION> for details and options.
+
 =head1 MIXED DATA MODE
 
 Mixed data mode is a special use-case for Atomic::Pipe. In this mode the
@@ -1079,6 +1274,173 @@ You can also turn mixed-data mode after construction, but you must do so on both
 
 Doing so will make the pipe non-blocking, and will make all bursts/messages
 include the necessary control characters.
+
+=head1 COMPRESSION
+
+C<Atomic::Pipe> can transparently compress B<bursts> and B<messages> (including
+in mixed-data mode) with Zstandard. Plain C<print $wh ...> traffic is B<not>
+compressed. Both ends of the pipe must be configured the same way; mismatch
+produces protocol errors (or, in the case of mismatched dictionaries, silent
+corruption -- see L</"Custom dictionary"> below).
+
+Requires L<Compress::Zstd> (a soft / recommended dependency, loaded only when
+compression is enabled).
+
+=head2 Constructor options
+
+All constructors (C<new>, C<pair>, C<from_fh>, C<from_fd>, C<read_fifo>,
+C<write_fifo>) accept:
+
+=over 4
+
+=item compression => 'zstd'
+
+Enable Zstd compression. Currently C<'zstd'> is the only supported algorithm;
+any other value croaks at construction.
+
+=item compression_level => $level
+
+Zstd compression level, defaults to 3. Only meaningful when C<compression> is
+enabled.
+
+=item compression_dictionary => $bytes
+
+Optional shared Zstd dictionary, supplied as raw bytes. Both ends must use the
+same dictionary content. Mutually exclusive with C<compression_dictionary_file>.
+
+=item compression_dictionary_file => $path
+
+Same as C<compression_dictionary> but loaded from a file via
+L<Compress::Zstd::CompressionDictionary/new_from_file>. The file is read on
+demand.
+
+=item keep_compressed => $bool
+
+When set together with C<compression>, reads expose the on-wire compressed
+bytes alongside the decompressed payload. See L</read_message> and
+L</get_line_burst_or_data> for the exact return-shape changes. Has no effect
+without C<compression>.
+
+=back
+
+=head2 Custom dictionary
+
+Custom Zstd dictionaries can dramatically reduce frame size for small,
+repetitive payloads. Either form (bytes or file) may be supplied at
+construction or via L</set_compression_dictionary> /
+L</set_compression_dictionary_file>.
+
+B<Caveat:> raw zstd dictionaries do not embed a dict-ID. As a result a
+B<mismatched> peer dictionary will silently decode to garbage rather than
+fail. (Hard frame corruption -- truncated or invalid frames -- still raises
+fatally.) Both ends must agree on byte-identical dictionary content.
+
+=head2 Performance
+
+Compression is not just a wire-size optimization for C<Atomic::Pipe>: when
+messages exceed C<PIPE_BUF> (typically 4096 bytes on Linux) the writer must
+fragment them into multiple non-atomic chunks, and the reader must reassemble
+them. Compressing the payload first frequently collapses a multi-part message
+back into a single atomic burst, which avoids that per-message protocol
+overhead entirely. As a result, on workloads dominated by larger-than-PIPE_BUF
+messages, compression is often B<much faster end-to-end than no compression>,
+even after accounting for the CPU cost of compress/decompress.
+
+The kernel pipe buffer size (see L</resize>) does B<not> affect this --
+fragmentation is keyed on the POSIX C<PIPE_BUF> atomic-write threshold, not on
+the buffer capacity.
+
+=head3 Benchmark: streaming JSON objects
+
+Numbers below are from C<bench/zstd_compression.pl> in the distribution. The
+workload is a synthetic but representative stream of JSON log/event objects
+sent in mixed-data mode via C<write_message>. The corpus is generated once and
+reused across all runs; sizes are JSON-encoded byte counts.
+
+Two corpora were measured:
+
+=over 4
+
+=item Small JSON (10 MB total, 11785 objects)
+
+Object sizes 181 .. 1977 bytes, average ~890 B; ~37% of objects under 500 B.
+Most messages fit in a single C<PIPE_BUF> burst regardless of compression.
+
+  level     raw MB/s   wire MB    ratio   saved
+  plain         9.74    10.00       -        -
+  L-3          15.98     6.68    1.50x    33.2%
+  L1           24.55     4.92    2.03x    50.8%
+  L3 (def)     27.79     4.91    2.04x    50.9%
+  L5           46.34     4.87    2.05x    51.3%
+  L7           63.72     4.87    2.05x    51.3%
+  L12          27.02     4.85    2.06x    51.5%
+  L22          14.43     4.84    2.07x    51.6%
+
+For this size distribution, levels 1..7 are all faster than no compression
+(pipe back-pressure on the uncompressed run still dominates).
+
+=item Larger JSON (100 MB total, 20407 objects)
+
+Object sizes 187 .. 10000 bytes, average ~5.1 KB, evenly distributed across
+the 1..10 KB range. Most objects exceed C<PIPE_BUF>, so the uncompressed path
+pays the multi-part fragmentation cost on nearly every message.
+
+  level     raw MB/s   wire MB    ratio   saved
+  plain         0.29   100.00       -        -
+  L-3         287.85    35.61    2.81x    64.4%
+  L-1         273.56    33.92    2.95x    66.1%
+  L1          237.04    30.56    3.27x    69.4%
+  L3 (def)    207.61    30.25    3.31x    69.7%
+  L5          113.02    30.01    3.33x    70.0%
+  L9           39.35    29.93    3.34x    70.1%
+  L18           7.81    28.14    3.55x    71.9%
+  L22           7.85    28.14    3.55x    71.9%
+
+Here the uncompressed run collapses to ~0.29 MB/s, while even modest
+compression levels achieve 200+ MB/s -- a ~1000x throughput improvement
+driven almost entirely by avoided fragmentation. Levels above ~5 trade
+significant CPU for negligible additional ratio.
+
+=item Pipe buffer size has minimal impact
+
+The same 100 MB corpus, holding mode constant and varying the kernel pipe
+buffer (32 KB, 128 KB, 512 KB, 1 MB), shows almost no movement in either
+direction. The bottleneck is C<PIPE_BUF>-aligned framing, not buffer fill, so
+calling L</resize> with a larger size will not rescue an uncompressed
+large-message workload.
+
+=back
+
+=head3 Practical guidance
+
+=over 4
+
+=item *
+
+If your messages are routinely larger than C<PIPE_BUF> (~4 KB), enabling
+compression is almost always a throughput win, not just a bandwidth win.
+
+=item *
+
+For mixed JSON-like payloads, B<level 1> or the default B<level 3> are good
+starting points. Level -3 is the throughput champion when CPU is precious and
+some ratio can be sacrificed.
+
+=item *
+
+Levels above ~7 buy single-digit-percent ratio gains for multi-x CPU cost; in
+an IPC path they are rarely worth it.
+
+=item *
+
+A custom dictionary (L</"Custom dictionary">) helps most when payloads are
+small and share structure -- e.g. identical JSON keys across every message.
+
+=back
+
+These results depend heavily on payload entropy and CPU. Re-run
+C<bench/zstd_compression.pl> against a representative slice of your own data
+before committing to a level.
 
 =head1 METHODS
 
@@ -1202,6 +1564,15 @@ Get the next message. This will block until a message is received unless you
 set C<< $p->blocking(0) >>. If blocking is turned off, and no message is ready,
 this will return undef. This will also return undef when the pipe is closed
 (EOF).
+
+When C<compression> and C<keep_compressed> are both enabled, list-context calls
+additionally return the raw on-wire compressed bytes:
+
+    my ($message, $compressed) = $p->read_message;
+
+In C<< debug => 1 >> mode the returned hashref gains a C<compressed> key
+holding the raw compressed bytes. Scalar-context calls always return just the
+decompressed message, regardless of C<keep_compressed>.
 
 =item $p->blocking($bool)
 
@@ -1387,6 +1758,73 @@ buffered line not terminated by a newline, if such a line has been read and is
 pending in the buffer. Calling this multiple times will return the same peek
 line (and anything added to the buffer since the last read) until the buffer
 reads a newline or hits EOF.
+
+When C<compression> and C<keep_compressed> are both enabled, the C<burst> and
+C<message> return paths additionally yield a C<< compressed => $raw_bytes >>
+pair:
+
+    (burst   => $decompressed, compressed => $raw)
+    (message => $decompressed, compressed => $raw)
+
+The C<line> and C<peek> paths never include a C<compressed> key. The 2-tuple
+idiom
+
+    my ($type, $data) = $p->get_line_burst_or_data;
+
+remains valid; the extra elements are simply discarded.
+
+=back
+
+=head3 COMPRESSION METHODS
+
+=over 4
+
+=item $algo_or_undef = $p->compression
+
+=item $level_or_undef = $p->compression_level
+
+=item $bytes_or_undef = $p->compression_dictionary
+
+=item $path_or_undef = $p->compression_dictionary_file
+
+=item $bool = $p->keep_compressed
+
+Read-only accessors for the corresponding compression settings. See
+L</COMPRESSION>.
+
+=item $p->set_compression('zstd', $level)
+
+=item $p->set_compression(undef)
+
+Enable, change, or disable compression on an existing pipe. C<$level> is
+optional; calling C<< $p->set_compression('zstd') >> with no level preserves
+whatever level was previously set. To reset the level to its default, call
+C<< $p->set_compression(undef) >> first (which clears compression, level,
+and any cached compressors), then re-enable.
+
+C<set_compression(undef)> does B<not> clear C<compression_dictionary> or
+C<compression_dictionary_file>; the dictionary is preserved across
+disable/re-enable. Use the dictionary setters to clear those slots.
+
+=item $p->set_compression_dictionary($bytes)
+
+=item $p->set_compression_dictionary(undef)
+
+Set, replace, or clear the raw-bytes dictionary. Setting clears any
+file-path dictionary (mutually exclusive). Cached preprocessed dictionaries
+are rebuilt on next compress/decompress.
+
+=item $p->set_compression_dictionary_file($path)
+
+=item $p->set_compression_dictionary_file(undef)
+
+Set, replace, or clear the file-path dictionary. Setting clears any
+raw-bytes dictionary.
+
+=item $p->set_keep_compressed($bool)
+
+Toggle whether reads expose the raw compressed bytes alongside the
+decompressed payload.
 
 =back
 
