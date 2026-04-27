@@ -1,5 +1,7 @@
 {{$NEXT}}
 
+0.028     2026-04-26 20:20:00-07:00 America/Los_Angeles
+
     - Broaden environmental skip in t/resize.t for the raw
       fcntl(F_SETPIPE_SZ) sentinel: any non-EINVAL errno is treated as
       environmental (smoker pipe-page budget, EBUSY, etc.) and
