@@ -1,5 +1,6 @@
 use Test2::V0;
 use Atomic::Pipe;
+use IO::Handle;
 
 plan skip_all => 'Compress::Zstd not installed'
     unless eval { require Compress::Zstd; 1 };

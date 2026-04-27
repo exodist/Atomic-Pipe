@@ -1,5 +1,10 @@
 {{$NEXT}}
 
+    - Load IO::Handle explicitly in Atomic::Pipe and t/compression.t
+      so $w->wh->autoflush(1) works on perls (e.g. 5.12) that do not
+      autoload IO::Handle methods on pipe filehandles. Fixes the
+      mixed_mode_compression FAIL in t/compression.t under perl 5.12.5.
+
 0.027     2026-04-26 05:22:21-07:00 America/Los_Angeles
 
     - Skip dictionary subtests in t/compression.t when the

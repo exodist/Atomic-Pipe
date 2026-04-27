@@ -5,6 +5,7 @@ use warnings;
 our $VERSION = '0.028';
 
 use IO();
+use IO::Handle();
 use Fcntl();
 use bytes();
 
