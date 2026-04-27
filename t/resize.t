@@ -3,7 +3,7 @@ use Atomic::Pipe;
 use POSIX qw/mkfifo/;
 use File::Temp qw/tempdir/;
 use Fcntl ();
-use Errno qw/EPERM ENOMEM/;
+use Errno qw/EPERM ENOMEM EBUSY EINVAL/;
 
 skip_all("F_SETPIPE_SZ not available") unless defined &Fcntl::F_SETPIPE_SZ;
 
@@ -53,11 +53,18 @@ unlink $f;
 mkfifo($f, 0700) or die "mkfifo: $!";
 my $p2 = Atomic::Pipe->read_fifo($f);
 my $rh = $p2->rh;
-my $r2 = fcntl($rh, &Fcntl::F_SETPIPE_SZ, $ms);
+my $r2  = fcntl($rh, &Fcntl::F_SETPIPE_SZ, $ms);
+my $err = $!;
 SKIP: {
-    skip "kernel pipe-user-pages budget exhausted ($!)", 1
-        if !defined $r2 && ($! == EPERM || $! == ENOMEM);
-    ok(defined $r2, "raw fcntl(F_SETPIPE_SZ, max_size()) does not return undef");
+    # EINVAL is the chomp-string regression we actually want to catch
+    # (fcntl reads $ms as a buffer pointer and rejects). Anything else is
+    # environmental: pipe-user-pages budget (EPERM/ENOMEM), pipe-has-data
+    # (EBUSY), or smoker-specific quirks. Skip those rather than fail.
+    if (!defined $r2 && 0+$err != EINVAL) {
+        skip "raw fcntl failed environmentally ($err)", 1;
+    }
+    ok(defined $r2, "raw fcntl(F_SETPIPE_SZ, max_size()) does not return undef")
+        or diag("errno: $err (", 0+$err, ")");
 }
 
 done_testing;

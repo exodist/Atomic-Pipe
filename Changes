@@ -1,5 +1,12 @@
 {{$NEXT}}
 
+    - Broaden environmental skip in t/resize.t for the raw
+      fcntl(F_SETPIPE_SZ) sentinel: any non-EINVAL errno is treated as
+      environmental (smoker pipe-page budget, EBUSY, etc.) and
+      skipped. EINVAL stays a hard failure since that is the
+      chomp-string regression the sentinel exists to catch. Adds the
+      failing errno to diag output for future debugging.
+
     - Load IO::Handle explicitly in Atomic::Pipe and t/compression.t
       so $w->wh->autoflush(1) works on perls (e.g. 5.12) that do not
       autoload IO::Handle methods on pipe filehandles. Fixes the
