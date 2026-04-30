@@ -1,5 +1,7 @@
 {{$NEXT}}
 
+0.029     2026-04-30 09:15:03-07:00 America/Los_Angeles
+
     - Add [PruneCruft] to dist.ini so build artifacts (blib/,
       pm_to_blib, MYMETA.*) no longer leak into release tarballs.
 
