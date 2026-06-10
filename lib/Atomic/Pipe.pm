@@ -49,7 +49,8 @@ BEGIN {
         *SSIZE_MAX = \&POSIX::SSIZE_MAX;
     }
     else {
-        *SSIZE_MAX = sub() { 512 };
+        # POSIX guarantees SSIZE_MAX is at least 32767 (_POSIX_SSIZE_MAX).
+        *SSIZE_MAX = sub() { 32767 };
     }
 
     {
@@ -547,12 +548,11 @@ sub get_line_burst_or_data {
     my $key     = $self->{+MESSAGE_KEY}   // croak "missing 'message_key', not in mixed_data_mode";
 
     my $buffer = $self->{+MIXED_BUFFER} //= {
-        lines         => '',
-        burst         => '',
-        in_burst      => 0,
-        in_message    => 0,
-        do_extra_loop => 0,
-        strip_term    => 0,
+        lines      => '',
+        burst      => '',
+        in_burst   => 0,
+        in_message => 0,
+        strip_term => 0,
     };
 
     my $peek;
@@ -620,7 +620,6 @@ sub get_line_burst_or_data {
             if ($term) {
                 $self->{+IN_BUFFER_SIZE} = length($self->{+IN_BUFFER});
                 $buffer->{in_burst} = 0;
-                $buffer->{do_extra_loop}++;
                 my $compressed = delete $buffer->{burst};
                 if ($self->{+COMPRESSION}) {
                     my $decompressed = $self->_decompress($compressed);
@@ -661,21 +660,6 @@ sub get_line_burst_or_data {
             $self->{+IN_BUFFER_SIZE} = 0;
         }
     }
-}
-
-sub debug {
-    my ($id, $buffer) = @_;
-
-    print "---debug $id---\n";
-    for my $key (sort keys %$buffer) {
-        my $val = $buffer->{$key} // '<UNDEF>';
-        $val =~ s/\x0E/\\x0E/g;
-        $val =~ s/\x0F/\\x0F/g;
-        $val =~ s/\x10/\\x10/g;
-        $val =~ s/\n/\\n/g;
-        $val =~ s/\r/\\r/g;
-        print "$key: |$val|\n\n";
-    };
 }
 
 # This is a heavily modified version of a pattern suggested on stack-overflow
