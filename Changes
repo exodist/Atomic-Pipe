@@ -1,5 +1,7 @@
 {{$NEXT}}
 
+0.031     2026-06-09 20:43:38-07:00 America/Los_Angeles
+
     - Fix infinite retry loop in _write_burst() on hard syswrite errors such as EBADF; the pipe is now marked invalid and throws.
     - Only consult $! when syswrite actually fails, avoiding misreads of stale errno after a successful write.
     - Treat EWOULDBLOCK like EAGAIN on platforms where they differ.
