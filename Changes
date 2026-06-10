@@ -7,6 +7,8 @@
     - DESTROY now localizes $., $@, $!, $^E and $? so a destructor flush cannot clobber the caller's error state.
     - A truncated message header at EOF now throws instead of reading as a clean EOF.
     - Fix eof() mixed-mode buffer check that inspected the wrong slot (lines vs burst).
+    - from_fh() and from_fd() now accept the same %params as the other constructors, as the docs already claimed.
+    - mixed_data_mode => 1 is now honored as a constructor param by all constructors, not just pair().
 
 0.030     2026-06-08 15:09:48-07:00 America/Los_Angeles
 

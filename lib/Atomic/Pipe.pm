@@ -353,7 +353,7 @@ sub read_fifo {
     open(my $fh, '+<', $fifo) or die "Could not open fifo ($fifo) for reading: $!";
     binmode($fh);
 
-    return bless({%params, RH() => $fh}, $class);
+    return $class->_new_from_params(\%params, RH() => $fh);
 }
 
 sub write_fifo {
@@ -366,13 +366,19 @@ sub write_fifo {
     open(my $fh, '>', $fifo) or die "Could not open fifo ($fifo) for writing: $!";
     binmode($fh);
 
-    return bless({%params, WH() => $fh}, $class);
+    return $class->_new_from_params(\%params, WH() => $fh);
 }
 
 sub from_fh {
     my $class = shift;
-    my $ifh = pop;
-    my ($mode) = @_;
+
+    # Mode is optional: from_fh($fh, %params) or from_fh($mode, $fh, %params).
+    my $mode;
+    $mode = shift if @_ && !ref($_[0]) && $MODE_TO_DIR{$_[0]};
+    my $ifh = shift;
+    my %params = @_;
+
+    $class->_check_params(%params);
 
     croak "Filehandle is not a pipe (-p check)" unless -p $ifh;
 
@@ -382,12 +388,14 @@ sub from_fh {
     open(my $fh, $mode, $ifh) or croak "Could not clone ($mode) filehandle: $!";
     binmode($fh);
 
-    return bless({$dir => $fh}, $class);
+    return $class->_new_from_params(\%params, $dir => $fh);
 }
 
 sub from_fd {
     my $class = shift;
-    my ($mode, $fd) = @_;
+    my ($mode, $fd, %params) = @_;
+
+    $class->_check_params(%params);
 
     my $dir = $class->_mode_to_dir($mode) // croak "Invalid mode: $mode";
     open(my $fh, $mode, $fd) or croak "Could not open ($mode) fd$fd: $!";
@@ -395,7 +403,18 @@ sub from_fd {
     croak "Filehandle is not a pipe (-p check)" unless -p $fh;
 
     binmode($fh);
-    return bless({$dir => $fh}, $class);
+    return $class->_new_from_params(\%params, $dir => $fh);
+}
+
+sub _new_from_params {
+    my ($class, $params, @handles) = @_;
+
+    my $mixed = delete $params->{mixed_data_mode};
+
+    my $self = bless({%$params, @handles}, $class);
+    $self->set_mixed_data_mode() if $mixed;
+
+    return $self;
 }
 
 sub new {
@@ -410,7 +429,7 @@ sub new {
     binmode($wh);
     binmode($rh);
 
-    return bless({%params, RH() => $rh, WH() => $wh}, $class);
+    return $class->_new_from_params(\%params, RH() => $rh, WH() => $wh);
 }
 
 sub pair {
@@ -419,21 +438,14 @@ sub pair {
 
     $class->_check_params(%params);
 
-    my $mixed = delete $params{mixed_data_mode};
-
     my ($rh, $wh);
     pipe($rh, $wh) or die "Could not create pipe: $!";
 
     binmode($wh);
     binmode($rh);
 
-    my $r = bless({%params, RH() => $rh}, $class);
-    my $w = bless({%params, WH() => $wh}, $class);
-
-    if ($mixed) {
-        $r->set_mixed_data_mode();
-        $w->set_mixed_data_mode();
-    }
+    my $r = $class->_new_from_params({%params}, RH() => $rh);
+    my $w = $class->_new_from_params({%params}, WH() => $wh);
 
     return ($r, $w);
 }
