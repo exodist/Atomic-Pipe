@@ -3,6 +3,7 @@
     - Fix infinite retry loop in _write_burst() on hard syswrite errors such as EBADF; the pipe is now marked invalid and throws.
     - Only consult $! when syswrite actually fails, avoiding misreads of stale errno after a successful write.
     - Treat EWOULDBLOCK like EAGAIN on platforms where they differ.
+    - close() and reader() now flush output buffered by non-blocking writes instead of silently dropping it and croaking in DESTROY.
 
 0.030     2026-06-08 15:09:48-07:00 America/Los_Angeles
 

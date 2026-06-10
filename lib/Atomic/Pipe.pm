@@ -842,13 +842,26 @@ sub reader {
 
     return 1 unless $self->{+WH};
 
+    $self->_flush_before_close;
     close(delete $self->{+WH});
     return 1;
 }
 
+# Buffered bursts from non-blocking writes must not be silently dropped when
+# the write handle goes away (DESTROY would also croak trying to flush them
+# without a handle).
+sub _flush_before_close {
+    my $self = shift;
+    return if $self->{+HIT_EPIPE} || $self->{+INVALID_STATE};
+    $self->flush(blocking => 1) if $self->pending_output;
+}
+
 sub close {
     my $self = shift;
-    close(delete $self->{+WH}) if $self->{+WH};
+    if ($self->{+WH}) {
+        $self->_flush_before_close;
+        close(delete $self->{+WH});
+    }
     close(delete $self->{+RH}) if $self->{+RH};
     return;
 }
@@ -891,8 +904,8 @@ sub write_burst {
 
 sub DESTROY {
     my $self = shift;
-    return if $self->{+HIT_EPIPE};
-    $self->flush(blocking => 1) if $self->pending_output;
+    return if $self->{+HIT_EPIPE} || $self->{+INVALID_STATE};
+    $self->flush(blocking => 1) if $self->{+WH} && $self->pending_output;
 }
 
 sub pending_output {
