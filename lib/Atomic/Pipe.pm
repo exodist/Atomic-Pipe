@@ -473,6 +473,7 @@ sub set_compression {
         delete $self->{_compression_cdict};
         delete $self->{_decompression_ctx};
         delete $self->{_decompression_ddict};
+        delete $self->{_compress_cache};
         return;
     }
 
@@ -490,6 +491,7 @@ sub set_compression {
     delete $self->{_compression_cdict};
     delete $self->{_decompression_ctx};
     delete $self->{_decompression_ddict};
+    delete $self->{_compress_cache};
 
     return;
 }
@@ -507,6 +509,7 @@ sub set_compression_dictionary {
     }
     delete $self->{_compression_cdict};
     delete $self->{_decompression_ddict};
+    delete $self->{_compress_cache};
     return;
 }
 
@@ -523,6 +526,7 @@ sub set_compression_dictionary_file {
     }
     delete $self->{_compression_cdict};
     delete $self->{_decompression_ddict};
+    delete $self->{_compress_cache};
     return;
 }
 
@@ -886,11 +890,24 @@ sub delimiter_size {
     return $_[0]->{+DELIMITER_SIZE} //= bytes::length($_[0]->{+BURST_PREFIX} // '') + bytes::length($_[0]->{+BURST_POSTFIX} // '');
 }
 
+# The typical fits_in_burst() then write_burst() sequence would compress the
+# same payload twice; remember the last result.
+sub _compress_cached {
+    my ($self, $data) = @_;
+
+    my $cache = $self->{_compress_cache};
+    return $cache->[1] if $cache && $cache->[0] eq $data;
+
+    my $out = $self->_compress($data);
+    $self->{_compress_cache} = [$data, $out];
+    return $out;
+}
+
 sub fits_in_burst {
     my $self = shift;
     my ($data) = @_;
 
-    $data = $self->_compress($data) if $self->{+COMPRESSION};
+    $data = $self->_compress_cached($data) if $self->{+COMPRESSION};
 
     my $size = bytes::length($data) + ($self->{+DELIMITER_SIZE} // $self->delimiter_size);
     return undef unless $size <= PIPE_BUF;
@@ -902,9 +919,8 @@ sub write_burst {
     my $self = shift;
     my ($data) = @_;
 
-    $data = $self->_compress($data) if $self->{+COMPRESSION};
+    $data = $self->_compress_cached($data) if $self->{+COMPRESSION};
 
-    # Intentionally not delegating to fits_in_burst() — that would compress twice.
     my $size = bytes::length($data) + ($self->{+DELIMITER_SIZE} // $self->delimiter_size);
     return undef unless $size <= PIPE_BUF;
 
