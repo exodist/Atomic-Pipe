@@ -204,7 +204,9 @@ sub fill_buffer {
     return 0;
 }
 
-sub _get_from_buffer  { $_[0]->_from_buffer($_[1], remove => 1) }
+# Must forward %params: callers rely on eof_invalid to turn a truncated
+# message at EOF into an exception instead of a clean-looking EOF.
+sub _get_from_buffer  { my $self = shift; $self->_from_buffer(@_, remove => 1) }
 sub _peek_from_buffer { shift->_from_buffer(@_) }
 
 sub _from_buffer {
@@ -577,8 +579,17 @@ sub get_line_burst_or_data {
             my ($id, $message) = $self->_extract_message(one_part_only => 1);
 
             unless(defined $id) {
-                next unless $self->{+EOF} && !$self->{+IN_BUFFER_SIZE};
-                $self->throw_invalid('Incomplete burst data received before end of pipe');
+                $self->throw_invalid('Incomplete burst data received before end of pipe')
+                    if $self->{+EOF} && !$self->{+IN_BUFFER_SIZE};
+
+                my $before = $self->{+IN_BUFFER_SIZE};
+                $self->fill_buffer;
+                next if $self->{+EOF} || $self->{+IN_BUFFER_SIZE} > $before;
+
+                # Not EOF and no new bytes arrived: another pass cannot make
+                # progress. Return empty so a non-blocking caller can wait and
+                # retry instead of spinning inside this call.
+                return;
             }
 
             $buffer->{strip_term}++;

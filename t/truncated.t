@@ -20,6 +20,20 @@ like(
     "truncated header at EOF throws instead of looking like clean EOF",
 );
 
+# A truncated payload: an intact 16-byte header claiming more bytes than
+# arrive before EOF. Must also raise, not return undef as if EOF were clean.
+my ($r3, $w3) = Atomic::Pipe->pair;
+syswrite($w3->wh, pack('l2L2', $$, 0, 0, 100) . 'AAAAA') or die "syswrite: $!";
+$w3->close;
+
+like(
+    dies {
+        $r3->read_message for 1 .. 5;
+    },
+    qr/invalid state/i,
+    "truncated payload at EOF throws instead of reading as clean EOF",
+);
+
 # Clean EOF (no trailing garbage) still reads as undef.
 my ($r2, $w2) = Atomic::Pipe->pair;
 $w2->write_message("x");
