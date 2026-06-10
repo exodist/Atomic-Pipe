@@ -904,6 +904,7 @@ sub write_burst {
 
 sub DESTROY {
     my $self = shift;
+    local ($., $@, $!, $^E, $?);
     return if $self->{+HIT_EPIPE} || $self->{+INVALID_STATE};
     $self->flush(blocking => 1) if $self->{+WH} && $self->pending_output;
 }
