@@ -24,10 +24,14 @@ use List::Util qw/min/;
 use Scalar::Util qw/blessed/;
 
 use Errno qw/EINTR EAGAIN EPIPE/;
-my %RETRY_ERRNO;
+my (%RETRY_ERRNO, %NONBLOCK_ERRNO);
 BEGIN {
     %RETRY_ERRNO = (EINTR() => 1);
     $RETRY_ERRNO{Errno->ERESTART} = 1 if Errno->can('ERESTART');
+
+    # EWOULDBLOCK == EAGAIN on most platforms, but POSIX allows them to differ.
+    %NONBLOCK_ERRNO = (EAGAIN() => 1);
+    $NONBLOCK_ERRNO{Errno->EWOULDBLOCK} = 1 if Errno->can('EWOULDBLOCK');
 }
 
 BEGIN {
@@ -177,7 +181,7 @@ sub fill_buffer {
         my $rbuff = '';
         my $got = sysread($rh, $rbuff, $to_read);
         unless(defined $got) {
-            return 0 if $! == EAGAIN; # NON-BLOCKING
+            return 0 if $NONBLOCK_ERRNO{0 + $!}; # NON-BLOCKING
             if ($RETRY_ERRNO{0 + $!}) {
                 next unless $use_select; # retry on EINTR in fallback mode
                 return 0;               # IO::Select handles EINTR
@@ -932,19 +936,24 @@ sub _write_burst {
     $data = "${prefix}${data}${postfix}" if length($prefix) || length($postfix);
 
     my $wrote;
-    my $loop = 0;
     SWRITE: {
         $wrote = syswrite($wh, $data, $size);
-        if ($! == EPIPE || (IS_WIN32 && $! == 22)) {
-            $self->{+HIT_EPIPE} = 1;
-            delete $self->{+OUT_BUFFER};
-            croak "Disconnected pipe";
+
+        # $! is only meaningful when syswrite fails.
+        unless (defined $wrote) {
+            if ($! == EPIPE || (IS_WIN32 && $! == 22)) {
+                $self->{+HIT_EPIPE} = 1;
+                delete $self->{+OUT_BUFFER};
+                croak "Disconnected pipe";
+            }
+            return undef if $NONBLOCK_ERRNO{0 + $!} || (IS_WIN32 && $! == 28);    # NON-BLOCKING
+            redo SWRITE if $RETRY_ERRNO{0 + $!};
+            $self->throw_invalid("syswrite failed: $!");
         }
-        return undef if $! == EAGAIN || (IS_WIN32 && $! == 28); # NON-BLOCKING
-        redo SWRITE if !$wrote || $RETRY_ERRNO{0 + $!};
+
+        redo SWRITE unless $wrote;
         last SWRITE if $wrote == $size;
-        $wrote //= "<NULL>";
-        die "$wrote vs $size: $!";
+        die "partial write: $wrote vs $size: $!";
     }
 
     return $wrote;
