@@ -5,6 +5,7 @@
     - Treat EWOULDBLOCK like EAGAIN on platforms where they differ.
     - close() and reader() now flush output buffered by non-blocking writes instead of silently dropping it and croaking in DESTROY.
     - DESTROY now localizes $., $@, $!, $^E and $? so a destructor flush cannot clobber the caller's error state.
+    - A truncated message header at EOF now throws instead of reading as a clean EOF.
 
 0.030     2026-06-08 15:09:48-07:00 America/Los_Angeles
 

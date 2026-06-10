@@ -1060,7 +1060,15 @@ sub _extract_message {
 
     while (1) {
         unless ($state->{key}) {
-            my $key_bytes = $self->_get_from_buffer($psize) or return;
+            my $key_bytes = $self->_get_from_buffer($psize);
+            unless (defined($key_bytes) && length($key_bytes)) {
+                # Leftover bytes smaller than a header at EOF mean a writer
+                # died mid-message; a plain return here would look like a
+                # clean EOF and silently drop data.
+                $self->throw_invalid("EOF inside message header (truncated message)")
+                    if $self->{+EOF} && $self->{+IN_BUFFER_SIZE};
+                return;
+            }
 
             my %key;
             @key{qw/pid tid id size/} = unpack('l2L2', $key_bytes);
