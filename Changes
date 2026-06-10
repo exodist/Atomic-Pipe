@@ -1,5 +1,7 @@
 {{$NEXT}}
 
+0.032     2026-06-09 23:53:57-07:00 America/Los_Angeles
+
     - _get_from_buffer() no longer drops its parameters, so the eof_invalid guards actually fire: a message truncated by EOF now throws instead of being mistaken for a clean EOF.
     - read_message() on a message whose payload is cut short by EOF now throws instead of returning undef (silent data loss).
     - get_line_burst_or_data() no longer spins forever at 100% CPU inside a single call when a message is truncated by EOF (it throws) or still in flight on a non-blocking pipe (it returns empty so the caller can select and retry).
