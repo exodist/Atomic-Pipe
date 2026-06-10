@@ -12,6 +12,7 @@
     - fits_in_burst() followed by write_burst() no longer compresses the payload twice.
     - SSIZE_MAX fallback raised from 512 to 32767 (_POSIX_SSIZE_MAX).
     - Remove dead code (unused debug() helper, do_extra_loop bookkeeping).
+    - Documentation fixes: correct 16-byte chunk header description, max_size() fallback behavior, byte-string payload note, typos.
 
 0.030     2026-06-08 15:09:48-07:00 America/Los_Angeles
 
